@@ -13,6 +13,7 @@ import VerificationCallback from "./pages/VerificationCallback";
 import Marketplace from "./pages/Marketplace";
 import Sell from "./pages/Sell";
 import ListingDetail from "./pages/ListingDetail";
+import Transactions from "./pages/Transactions";
 import Members from "./pages/Members";
 import MemberProfile from "./pages/MemberProfile";
 import MyProfile from "./pages/MyProfile";
@@ -66,6 +67,14 @@ function App() {
             element={
               <RequireApproved>
                 <ListingDetail />
+              </RequireApproved>
+            }
+          />
+          <Route
+            path="/transactions"
+            element={
+              <RequireApproved>
+                <Transactions />
               </RequireApproved>
             }
           />

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { AppNav } from "../components/AppNav";
 import { AvatarRing } from "../components/AvatarRing";
 import { VerifiedBadge } from "../components/VerifiedBadge";
@@ -12,6 +12,7 @@ const OFFER_PILL = { pending: "pending", accepted: "ok", declined: "review", wit
 
 export default function ListingDetail() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [l, setL] = useState(null);
   const [notFound, setNotFound] = useState(false);
   const [active, setActive] = useState(0);
@@ -52,8 +53,8 @@ export default function ListingDetail() {
     setBusy(true);
     try {
       await api.post(`/listings/${id}/buy-now`);
-      toast.success("Buy-now intent recorded at asking price. Payment handoff arrives in the next phase.");
-      loadOffers();
+      toast.success("Buy-now agreed. Complete payment off-platform with the seller.");
+      navigate("/transactions");
     } catch (err) {
       toast.error(formatApiErrorDetail(err.response?.data?.detail));
     } finally {
@@ -79,8 +80,13 @@ export default function ListingDetail() {
 
   const actOffer = async (offerId, action) => {
     try {
-      await api.post(`/offers/${offerId}/${action}`);
+      const { data } = await api.post(`/offers/${offerId}/${action}`);
       toast.success(`Offer ${action}${action.endsWith("e") ? "d" : "ed"}`);
+      if (action === "accept" && data.transaction_id) {
+        toast.info("Transaction created — coordinate the off-platform payment.");
+        navigate("/transactions");
+        return;
+      }
       loadOffers();
     } catch (err) {
       toast.error(formatApiErrorDetail(err.response?.data?.detail));
@@ -191,7 +197,7 @@ export default function ListingDetail() {
                     </form>
                   )}
                   <div className="payment-note">
-                    <ShieldCheck size={13} /> Payment happens off-platform between members (PayPal/Venmo). Handoff arrives in the next phase.
+                    <ShieldCheck size={13} /> Payment happens off-platform, member-to-member (PayPal/Venmo). First Unit never holds funds.
                   </div>
                 </div>
               )}

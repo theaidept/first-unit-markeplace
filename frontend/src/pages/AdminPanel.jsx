@@ -19,6 +19,18 @@ export default function AdminPanel() {
   const [queue, setQueue] = useState([]);
   const [reasons, setReasons] = useState({});
   const [loading, setLoading] = useState(true);
+  const [fee, setFee] = useState({ amount: 0, active: false });
+
+  const loadFee = async () => {
+    try { const { data } = await api.get("/admin/listing-fee"); setFee(data); } catch { /* ignore */ }
+  };
+  const saveFee = async () => {
+    try {
+      const { data } = await api.put("/admin/listing-fee", { amount: Number(fee.amount), active: !!fee.active });
+      setFee(data);
+      toast.success("Listing fee saved");
+    } catch (err) { toast.error(formatApiErrorDetail(err.response?.data?.detail)); }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -38,6 +50,7 @@ export default function AdminPanel() {
 
   useEffect(() => {
     load();
+    loadFee();
   }, []);
 
   const decide = async (userId, decision) => {
@@ -68,6 +81,25 @@ export default function AdminPanel() {
     <div className="fu-app" data-testid="admin-page">
       <AppNav />
       <div className="wrap">
+        <div className="card" style={{ padding: 20, margin: "24px 0 6px" }} data-testid="listing-fee-panel">
+          <div className="sc-head">Listing fee configuration · Lane B (not charged at launch)</div>
+          <div style={{ display: "flex", gap: 16, alignItems: "flex-end", flexWrap: "wrap" }}>
+            <div className="field" style={{ margin: 0 }}>
+              <label>Fee amount (USD)</label>
+              <input type="number" min="0" step="0.01" value={fee.amount}
+                onChange={(e) => setFee({ ...fee, amount: e.target.value })} data-testid="fee-amount" style={{ width: 160 }} />
+            </div>
+            <label className="undercover-toggle" style={{ margin: 0, background: "#fff" }} data-testid="fee-active-toggle">
+              <input type="checkbox" checked={!!fee.active} onChange={(e) => setFee({ ...fee, active: e.target.checked })} data-testid="fee-active" />
+              <div><b>Active</b><span>Off at launch — listings are free.</span></div>
+            </label>
+            <button className="btn btn-primary" onClick={saveFee} data-testid="fee-save-btn">Save fee</button>
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 10 }}>
+            Not wired to Stripe and never charged now. This control lets a listing fee be introduced later.
+          </div>
+        </div>
+
         <div className="admin-head">
           <div>
             <span className="eyebrow">Trust & Safety</span>

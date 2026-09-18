@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AppNav } from "../components/AppNav";
 import { ProfileCard } from "../components/ProfileCard";
+import { PaymentSettings } from "../components/PaymentSettings";
 import { AvatarRing } from "../components/AvatarRing";
 import { VerifiedBadge } from "../components/VerifiedBadge";
 import api, { formatApiErrorDetail } from "../lib/api";
@@ -196,6 +197,8 @@ export default function MyProfile() {
             </button>
           </form>
         </div>
+
+        <PaymentSettings />
       </div>
     </div>
   );

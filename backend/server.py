@@ -1324,7 +1324,10 @@ async def buy_now(listing_id: str, user: dict = Depends(require_verified)):
     listing = await db.listings.find_one({"id": listing_id})
     if not listing or listing["status"] != "live":
         raise HTTPException(status_code=404, detail="Listing not available")
-    return await _create_offer(listing_id, user, listing["price"], True)
+    if listing["seller_id"] == user["id"]:
+        raise HTTPException(status_code=400, detail="You cannot buy your own listing")
+    tx = await create_transaction(listing, user["id"], listing["price"])
+    return {"status": "ok", "transaction_id": tx["id"]}
 
 
 @api.get("/listings/{listing_id}/offers")
@@ -1361,7 +1364,201 @@ async def act_on_offer(offer_id: str, action: str, user: dict = Depends(require_
     else:
         raise HTTPException(status_code=400, detail="Invalid action")
     await db.offers.update_one({"id": offer_id}, {"$set": {"status": new_status, "updated_at": now_iso()}})
-    return {"status": "ok", "offer_status": new_status}
+    tx_id = None
+    if new_status == "accepted" and listing:
+        tx = await create_transaction(listing, offer["buyer_id"], offer["amount"])
+        tx_id = tx["id"]
+    return {"status": "ok", "offer_status": new_status, "transaction_id": tx_id}
+
+
+# ---------------------------------------------------------------------------
+# LANE A — off-platform peer-to-peer payment facilitation (constraint 6)
+# First Unit NEVER holds funds. No wallet, no escrow, no balance. We store only
+# a reference to direct a payment to the member, and record the agreement.
+# ---------------------------------------------------------------------------
+PAYPAL_OAUTH = bool(os.environ.get("PAYPAL_CLIENT_ID") and os.environ.get("PAYPAL_SECRET"))
+
+
+class PaymentLinkBody(BaseModel):
+    paypal_me: Optional[str] = None
+    paypal_email: Optional[str] = None
+    venmo_handle: Optional[str] = None
+
+
+class FeeConfigBody(BaseModel):
+    amount: float = Field(ge=0)
+    active: bool = False
+
+
+def _clean_handle(h: str) -> str:
+    return (h or "").strip().lstrip("@").strip("/").split("/")[-1]
+
+
+def payment_status(u: dict) -> dict:
+    return {
+        "paypal_connected": bool(u.get("paypal_me") or u.get("paypal_email") or u.get("paypal_ref")),
+        "paypal_me": u.get("paypal_me"),
+        "paypal_email": u.get("paypal_email"),
+        "venmo_handle": u.get("venmo_handle"),
+        "oauth_available": PAYPAL_OAUTH,
+    }
+
+
+def pay_targets(seller: dict, amount) -> list:
+    targets = []
+    amt = f"{float(amount):.2f}"
+    if seller.get("paypal_me"):
+        h = _clean_handle(seller["paypal_me"])
+        targets.append({"method": "paypal", "label": "PayPal.me", "handle": f"@{h}",
+                        "url": f"https://www.paypal.com/paypalme/{h}/{amt}"})
+    elif seller.get("paypal_email"):
+        targets.append({"method": "paypal", "label": "PayPal", "handle": seller["paypal_email"],
+                        "url": "https://www.paypal.com/myaccount/transfer/homepage/pay",
+                        "note": f"Send to {seller['paypal_email']} in PayPal"})
+    if seller.get("venmo_handle"):
+        h = _clean_handle(seller["venmo_handle"])
+        targets.append({"method": "venmo", "label": "Venmo", "handle": f"@{h}",
+                        "url": f"https://venmo.com/{h}?txn=pay&amount={amt}&note=First%20Unit%20sale"})
+    return targets
+
+
+@api.get("/payments/me")
+async def get_payments(user: dict = Depends(require_verified)):
+    return payment_status(user)
+
+
+@api.put("/payments/me")
+async def set_payments(body: PaymentLinkBody, user: dict = Depends(require_verified)):
+    updates = {}
+    if body.paypal_me is not None:
+        updates["paypal_me"] = _clean_handle(body.paypal_me) or None
+    if body.paypal_email is not None:
+        updates["paypal_email"] = body.paypal_email.strip() or None
+    if body.venmo_handle is not None:
+        updates["venmo_handle"] = _clean_handle(body.venmo_handle) or None
+    if updates:
+        await db.users.update_one({"id": user["id"]}, {"$set": updates})
+    fresh = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    return payment_status(fresh)
+
+
+@api.post("/payments/paypal/start")
+async def paypal_start(user: dict = Depends(require_verified)):
+    if PAYPAL_OAUTH:
+        cid = os.environ["PAYPAL_CLIENT_ID"]
+        redirect = f"{FRONTEND_URL}/settings/paypal/callback"
+        url = ("https://www.sandbox.paypal.com/connect?flowEntry=static"
+               f"&client_id={cid}&scope=openid%20email&redirect_uri={redirect}&response_type=code")
+        return {"mode": "redirect", "url": url}
+    return {"mode": "manual", "message": "Add your PayPal.me handle below to receive payments."}
+
+
+# --------------------------- Transactions (handoff) ---------------------------
+async def create_transaction(listing: dict, buyer_id: str, amount: float, method: str = "pending"):
+    doc = {
+        "id": str(uuid.uuid4()), "listing_id": listing["id"], "buyer_id": buyer_id,
+        "seller_id": listing["seller_id"], "agreed_amount": float(amount),
+        "payment_method": method, "status": "agreed",
+        "buyer_completed": False, "seller_completed": False,
+        "meetup_note": listing.get("meetup_note"),
+        "created_at": now_iso(), "updated_at": now_iso(),
+    }
+    await db.transactions.insert_one(doc)
+    return doc
+
+
+async def transaction_public(t: dict, viewer_id: str) -> dict:
+    listing = await db.listings.find_one({"id": t["listing_id"]}, {"_id": 0})
+    role = "buyer" if t["buyer_id"] == viewer_id else "seller"
+    counter_id = t["seller_id"] if role == "buyer" else t["buyer_id"]
+    counter = await seller_public(counter_id)
+    out = {
+        "id": t["id"], "listing_id": t["listing_id"],
+        "listing": {"title": listing["title"] if listing else "Listing",
+                    "photo": (listing.get("photos") or [None])[0] if listing else None} ,
+        "agreed_amount": t["agreed_amount"], "payment_method": t.get("payment_method"),
+        "status": t["status"], "role": role, "counterparty": counter,
+        "buyer_completed": t.get("buyer_completed"), "seller_completed": t.get("seller_completed"),
+        "meetup_note": t.get("meetup_note"), "created_at": t.get("created_at"),
+    }
+    if role == "buyer":
+        seller = await db.users.find_one({"id": t["seller_id"]}, {"_id": 0})
+        out["pay_targets"] = pay_targets(seller or {}, t["agreed_amount"])
+    return out
+
+
+@api.get("/transactions/mine")
+async def my_transactions(user: dict = Depends(require_verified)):
+    docs = await db.transactions.find(
+        {"$or": [{"buyer_id": user["id"]}, {"seller_id": user["id"]}]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(500)
+    return {"transactions": [await transaction_public(t, user["id"]) for t in docs]}
+
+
+@api.get("/transactions/{tx_id}")
+async def get_transaction(tx_id: str, user: dict = Depends(require_verified)):
+    t = await db.transactions.find_one({"id": tx_id}, {"_id": 0})
+    if not t or user["id"] not in (t["buyer_id"], t["seller_id"]):
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return await transaction_public(t, user["id"])
+
+
+@api.post("/transactions/{tx_id}/method")
+async def set_tx_method(tx_id: str, body: dict, user: dict = Depends(require_verified)):
+    t = await db.transactions.find_one({"id": tx_id})
+    if not t or t["buyer_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Only the buyer can choose the method")
+    method = body.get("payment_method")
+    if method not in ("paypal", "venmo"):
+        raise HTTPException(status_code=400, detail="Invalid method")
+    await db.transactions.update_one({"id": tx_id}, {"$set": {"payment_method": method, "updated_at": now_iso()}})
+    return {"status": "ok", "payment_method": method}
+
+
+@api.post("/transactions/{tx_id}/complete")
+async def complete_transaction(tx_id: str, user: dict = Depends(require_verified)):
+    t = await db.transactions.find_one({"id": tx_id})
+    if not t or user["id"] not in (t["buyer_id"], t["seller_id"]):
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if t["status"] != "agreed":
+        raise HTTPException(status_code=400, detail="Transaction is not open")
+    field = "buyer_completed" if user["id"] == t["buyer_id"] else "seller_completed"
+    await db.transactions.update_one({"id": tx_id}, {"$set": {field: True, "updated_at": now_iso()}})
+    t = await db.transactions.find_one({"id": tx_id})
+    if t.get("buyer_completed") and t.get("seller_completed"):
+        await db.transactions.update_one({"id": tx_id}, {"$set": {"status": "completed", "updated_at": now_iso()}})
+        await db.listings.update_one({"id": t["listing_id"]}, {"$set": {"status": "sold", "updated_at": now_iso()}})
+        return {"status": "ok", "transaction_status": "completed"}
+    return {"status": "ok", "transaction_status": "agreed", "waiting_on_other_party": True}
+
+
+@api.post("/transactions/{tx_id}/cancel")
+async def cancel_transaction(tx_id: str, user: dict = Depends(require_verified)):
+    t = await db.transactions.find_one({"id": tx_id})
+    if not t or user["id"] not in (t["buyer_id"], t["seller_id"]):
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if t["status"] != "agreed":
+        raise HTTPException(status_code=400, detail="Transaction is not open")
+    await db.transactions.update_one({"id": tx_id}, {"$set": {"status": "cancelled", "updated_at": now_iso()}})
+    return {"status": "ok", "transaction_status": "cancelled"}
+
+
+# --------------------------- Admin listing-fee config (Lane B placeholder) ---------------------------
+@api.get("/admin/listing-fee")
+async def get_listing_fee(admin: dict = Depends(require_admin)):
+    cfg = await db.config.find_one({"key": "listing_fee"}, {"_id": 0})
+    if not cfg:
+        cfg = {"key": "listing_fee", "amount": 0.0, "active": False}
+        await db.config.insert_one({**cfg, "created_at": now_iso()})
+    return {"amount": cfg.get("amount", 0.0), "active": cfg.get("active", False)}
+
+
+@api.put("/admin/listing-fee")
+async def set_listing_fee(body: FeeConfigBody, admin: dict = Depends(require_admin)):
+    await db.config.update_one({"key": "listing_fee"},
+                               {"$set": {"amount": float(body.amount), "active": bool(body.active),
+                                         "updated_at": now_iso()}}, upsert=True)
+    return {"amount": float(body.amount), "active": bool(body.active)}
 
 
 @api.get("/")

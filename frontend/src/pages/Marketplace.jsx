@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { AppNav } from "../components/AppNav";
 import { ListingCard } from "../components/ListingCard";
-import api from "../lib/api";
+import { StoryViewer } from "../components/StoryViewer";
+import { AvatarRing } from "../components/AvatarRing";
+import api, { fileUrl } from "../lib/api";
 import { Link } from "react-router-dom";
-import { Search, Plus, Sparkles, Video } from "lucide-react";
+import { Search, Plus, Sparkles, Video, Play } from "lucide-react";
 
 const CHIPS = [
   { key: "all", label: "All" },
@@ -12,18 +14,21 @@ const CHIPS = [
   { key: "art", label: "Art & Personal" },
   { key: "featured", label: "Featured" },
   { key: "near", label: "Near me" },
-  { key: "video", label: "Has video", inert: true },
+  { key: "video", label: "Has video" },
 ];
 
 export default function Marketplace() {
   const [listings, setListings] = useState(null);
   const [chip, setChip] = useState("all");
   const [q, setQ] = useState("");
+  const [stories, setStories] = useState([]);
+  const [viewer, setViewer] = useState(null);
 
   const load = async (activeChip = chip, query = q) => {
     const params = {};
     if (["gear", "vehicles", "art"].includes(activeChip)) params.category = activeChip;
     if (activeChip === "featured") params.featured = true;
+    if (activeChip === "video") params.has_video = true;
     if (query) params.q = query;
     const { data } = await api.get("/listings", { params });
     setListings(data.listings);
@@ -31,6 +36,7 @@ export default function Marketplace() {
 
   useEffect(() => {
     load("all", "");
+    api.get("/stories").then((r) => setStories(r.data.stories)).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -87,18 +93,41 @@ export default function Marketplace() {
           ))}
         </div>
 
-        {/* Featured Stories placeholder (reel arrives in Phase 6) */}
-        <div className="stories-placeholder" data-testid="featured-stories-placeholder">
+        {/* Featured Stories reel */}
+        <div className="stories-reel-wrap" data-testid="featured-stories">
           <div className="sp-head">
             <Sparkles size={15} /> Featured Stories
-            <span>Shoppable video stories arrive soon</span>
+            <span>Watch, then buy</span>
           </div>
-          <div className="sp-row">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div className="sp-dot" key={i} />
-            ))}
-          </div>
+          {stories.length === 0 ? (
+            <div className="stories-placeholder" data-testid="stories-empty">
+              <div className="sp-row">
+                {Array.from({ length: 6 }).map((_, i) => <div className="sp-dot" key={i} />)}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text-faint)", marginTop: 10 }}>
+                No stories yet — add a video to a listing to appear here.
+              </div>
+            </div>
+          ) : (
+            <div className="reel" data-testid="stories-reel">
+              {stories.map((s, i) => (
+                <button className="story-card" key={s.id} onClick={() => setViewer(i)} data-testid={`story-card-${s.listing_id}`}>
+                  <span className="sc-ring">
+                    <span className="sc-thumb" style={{ backgroundImage: s.photo ? `url(${fileUrl(s.photo)})` : undefined }}>
+                      <span className="sc-play"><Play size={16} fill="currentColor" /></span>
+                    </span>
+                  </span>
+                  <span className="sc-handle">{s.seller?.display_handle}</span>
+                  <span className="sc-price">${Number(s.price).toLocaleString()}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
+
+        {viewer !== null && (
+          <StoryViewer stories={stories} index={viewer} onClose={() => setViewer(null)} onIndex={setViewer} />
+        )}
 
         {listings === null ? (
           <div style={{ padding: 40, color: "var(--text-faint)" }}>Loading…</div>

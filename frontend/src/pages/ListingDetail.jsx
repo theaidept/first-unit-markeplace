@@ -132,6 +132,10 @@ export default function ListingDetail() {
         <div className="detail-grid">
           {/* Gallery */}
           <div>
+            {l.video && (
+              <video src={fileUrl(l.video)} controls playsInline className="detail-video"
+                data-testid="detail-video" poster={photos[0] ? fileUrl(photos[0]) : undefined} />
+            )}
             <div className="gallery-main">
               {photos[active] ? <img src={fileUrl(photos[active])} alt={l.title} /> : <div className="lc-noimg">No photo</div>}
               <span className="lc-cat">{CATEGORY_LABELS[l.category] || l.category}</span>

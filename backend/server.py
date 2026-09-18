@@ -981,6 +981,7 @@ APP_NAME = "first-unit"
 _storage_key = None
 
 IMAGE_MIME = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
+VIDEO_MIME = {"mp4": "video/mp4", "mov": "video/quicktime", "webm": "video/webm", "m4v": "video/x-m4v"}
 
 
 def init_storage(force: bool = False):
@@ -1075,6 +1076,7 @@ class ListingBody(BaseModel):
     description: str = ""
     price: float = Field(ge=0)
     photos: List[str] = []
+    video: Optional[str] = None
     meetup_note: Optional[str] = None
     publish: bool = False  # True => go live (runs enforcement), False => save as draft
 
@@ -1102,9 +1104,10 @@ async def listing_public(listing: dict, with_seller: bool = True) -> dict:
         "description": listing.get("description"),
         "price": listing.get("price"),
         "photos": listing.get("photos", []),
+        "video": listing.get("video"),
         "status": listing.get("status"),
         "meetup_note": listing.get("meetup_note"),
-        "has_video": False,
+        "has_video": bool(listing.get("video")),
         "featured": listing.get("featured", False),
         "created_at": listing.get("created_at"),
     }
@@ -1190,12 +1193,13 @@ async def create_listing(body: ListingBody, user: dict = Depends(require_verifie
         "id": lid, "seller_id": user["id"], "title": body.title.strip(),
         "category": body.category, "condition": body.condition,
         "location": body.location.strip(), "description": body.description.strip(),
-        "price": float(body.price), "photos": body.photos,
+        "price": float(body.price), "photos": body.photos, "video": body.video,
         "meetup_note": (body.meetup_note or "").strip() or None,
         "status": status, "featured": False,
         "created_at": now_iso(), "updated_at": now_iso(),
     }
     await db.listings.insert_one(doc)
+    await sync_story(doc)
     if flagged_term:
         await db.reports.insert_one({
             "id": str(uuid.uuid4()), "reporter": "System", "target_type": "listing",
@@ -1228,11 +1232,13 @@ async def update_listing(listing_id: str, body: ListingBody, user: dict = Depend
     updates = {
         "title": body.title.strip(), "category": body.category, "condition": body.condition,
         "location": body.location.strip(), "description": body.description.strip(),
-        "price": float(body.price), "photos": body.photos,
+        "price": float(body.price), "photos": body.photos, "video": body.video,
         "meetup_note": (body.meetup_note or "").strip() or None,
         "status": status, "updated_at": now_iso(),
     }
     await db.listings.update_one({"id": listing_id}, {"$set": updates})
+    listing.update(updates)
+    await sync_story(listing)
     if flagged_term:
         await db.reports.insert_one({
             "id": str(uuid.uuid4()), "reporter": "System", "target_type": "listing",
@@ -1257,12 +1263,14 @@ async def my_listings(user: dict = Depends(require_verified)):
 @api.get("/listings")
 async def feed(user: dict = Depends(require_verified),
                q: Optional[str] = Query(None), category: Optional[str] = Query(None),
-               featured: Optional[bool] = Query(None)):
+               featured: Optional[bool] = Query(None), has_video: Optional[bool] = Query(None)):
     query = {"status": "live"}
     if category and category != "all":
         query["category"] = category
     if featured:
         query["featured"] = True
+    if has_video:
+        query["video"] = {"$ne": None}
     if q:
         query["$or"] = [
             {"title": {"$regex": re.escape(q), "$options": "i"}},
@@ -1562,6 +1570,65 @@ async def set_listing_fee(body: FeeConfigBody, admin: dict = Depends(require_adm
                                {"$set": {"amount": float(body.amount), "active": bool(body.active),
                                          "updated_at": now_iso()}}, upsert=True)
     return {"amount": float(body.amount), "active": bool(body.active)}
+
+
+@api.post("/upload/video")
+async def upload_video(file: UploadFile = File(...), user: dict = Depends(require_verified)):
+    ext = (file.filename.rsplit(".", 1)[-1] if "." in (file.filename or "") else "").lower()
+    if ext not in VIDEO_MIME:
+        raise HTTPException(status_code=400, detail="Only MP4, MOV, WEBM or M4V videos are allowed")
+    data = await file.read()
+    if len(data) > 120 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Video must be under 120MB")
+    path = f"{APP_NAME}/videos/{user['id']}/{uuid.uuid4()}.{ext}"
+    try:
+        result = await asyncio.to_thread(put_object, path, data, VIDEO_MIME[ext])
+    except Exception as e:
+        logger.error(f"video upload failed: {e}")
+        raise HTTPException(status_code=502, detail="Video upload failed, please try again")
+    await db.files.insert_one({
+        "id": str(uuid.uuid4()), "storage_path": result["path"],
+        "original_filename": file.filename, "content_type": VIDEO_MIME[ext],
+        "size": result.get("size"), "owner_id": user["id"], "is_deleted": False,
+        "created_at": now_iso(),
+    })
+    return {"url": f"/api/files/{result['path']}", "path": result["path"]}
+
+
+async def sync_story(listing: dict):
+    """A story exists only for a LIVE listing that has a video; it always resolves to its listing."""
+    lid = listing["id"]
+    if listing.get("status") == "live" and listing.get("video"):
+        existing = await db.stories.find_one({"listing_id": lid})
+        if existing:
+            await db.stories.update_one({"listing_id": lid}, {"$set": {
+                "video": listing["video"], "active": True, "updated_at": now_iso()}})
+        else:
+            order = await db.stories.count_documents({})
+            await db.stories.insert_one({
+                "id": str(uuid.uuid4()), "listing_id": lid, "seller_id": listing["seller_id"],
+                "video": listing["video"], "order": order, "active": True,
+                "created_at": now_iso(), "updated_at": now_iso(),
+            })
+    else:
+        await db.stories.update_one({"listing_id": lid}, {"$set": {"active": False}})
+
+
+@api.get("/stories")
+async def get_stories(user: dict = Depends(require_verified)):
+    stories = await db.stories.find({"active": True}, {"_id": 0}).sort("order", 1).to_list(200)
+    out = []
+    for s in stories:
+        listing = await db.listings.find_one({"id": s["listing_id"]}, {"_id": 0})
+        if not listing or listing.get("status") != "live" or not listing.get("video"):
+            continue
+        out.append({
+            "id": s["id"], "listing_id": s["listing_id"], "video": s["video"],
+            "title": listing["title"], "price": listing["price"],
+            "photo": (listing.get("photos") or [None])[0],
+            "seller": await seller_public(s["seller_id"]),
+        })
+    return {"stories": out}
 
 
 @api.get("/")

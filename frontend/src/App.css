@@ -1376,6 +1376,37 @@ table.log tr:last-child td {
     flex: none;
 }
 
+/* Stories reel + cards */
+.stories-reel-wrap { border: 1px solid var(--hairline); border-radius: 2px; padding: 16px 18px; margin: 4px 0 22px; background: var(--panel-2); }
+.story-card { background: none; border: none; padding: 0; cursor: pointer; display: flex; flex-direction: column; align-items: center; width: 92px; flex: none; }
+.sc-ring { width: 78px; height: 78px; border-radius: 999px; padding: 3px; background: conic-gradient(from 200deg, var(--red), var(--gold), var(--navy-2), var(--red)); transition: transform 0.2s ease, box-shadow 0.2s ease; }
+.story-card:hover .sc-ring { transform: translateY(-3px) scale(1.05); box-shadow: 0 14px 26px -14px rgba(11,31,66,.6); }
+.sc-thumb { position: relative; width: 100%; height: 100%; border-radius: 999px; background: var(--navy); background-size: cover; background-position: center; border: 3px solid #fff; display: grid; place-items: center; }
+.sc-play { width: 26px; height: 26px; border-radius: 999px; background: rgba(11,31,66,.65); color: #fff; display: grid; place-items: center; }
+.sc-handle { font-size: 11.5px; font-weight: 700; color: var(--text); margin-top: 8px; max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-price { font-family: "Oswald", sans-serif; font-size: 13px; color: var(--navy); }
+
+/* Story viewer modal */
+.story-modal { position: fixed; inset: 0; z-index: 200; background: rgba(6,14,30,.88); display: grid; place-items: center; padding: 20px; }
+.story-stage { position: relative; width: min(420px, 94vw); aspect-ratio: 9/16; max-height: 92vh; background: #000; border-radius: 4px; overflow: hidden; box-shadow: 0 40px 80px -30px rgba(0,0,0,.8); }
+.story-video { width: 100%; height: 100%; object-fit: cover; background: #000; }
+.story-close { position: absolute; top: 12px; right: 12px; z-index: 4; width: 34px; height: 34px; border: none; border-radius: 999px; background: rgba(0,0,0,.5); color: #fff; cursor: pointer; display: grid; place-items: center; }
+.story-overlay { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; padding: 18px 16px; background: linear-gradient(180deg, transparent, rgba(9,22,46,.92)); color: #fff; }
+.so-seller { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+.so-buy { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.so-title { font-size: 14px; font-weight: 700; }
+.so-price { font-family: "Oswald", sans-serif; font-size: 24px; font-weight: 700; }
+.story-nav { position: absolute; top: 50%; transform: translateY(-50%); z-index: 4; width: 40px; height: 40px; border: none; border-radius: 999px; background: rgba(0,0,0,.4); color: #fff; cursor: pointer; display: grid; place-items: center; }
+.story-nav.left { left: 10px; } .story-nav.right { right: 10px; }
+
+/* Sell + detail video */
+.video-add { display: grid; place-items: center; border: 1px dashed var(--hairline); border-radius: 2px; padding: 26px; cursor: pointer; color: var(--navy); background: var(--panel-2); text-align: center; }
+.video-add .mini { display: block; font-size: 12px; margin-top: 6px; color: var(--text-dim); }
+.video-preview { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.sell-video { width: 100%; max-width: 360px; border-radius: 2px; background: #000; }
+.detail-video { width: 100%; border-radius: 2px; background: #000; margin-bottom: 10px; aspect-ratio: 16/10; object-fit: cover; }
+
+
 .listings-grid {
     display: grid;
     grid-template-columns: repeat(4, 1fr);

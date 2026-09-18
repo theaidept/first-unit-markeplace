@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { AppNav } from "../components/AppNav";
 import api, { fileUrl, formatApiErrorDetail } from "../lib/api";
 import { toast } from "sonner";
-import { Upload, X, Check, ImageIcon } from "lucide-react";
+import { Upload, X, Check, ImageIcon, Video } from "lucide-react";
 
 const CONDITIONS = ["Excellent", "Good", "Fair"];
 const STEPS = [
@@ -17,6 +17,7 @@ export default function Sell() {
   const [step, setStep] = useState(1);
   const [cats, setCats] = useState([]);
   const [uploading, setUploading] = useState(false);
+  const [uploadingVideo, setUploadingVideo] = useState(false);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({
     title: "",
@@ -27,6 +28,7 @@ export default function Sell() {
     description: "",
     meetup_note: "",
     photos: [],
+    video: "",
   });
 
   useEffect(() => {
@@ -60,6 +62,23 @@ export default function Sell() {
   };
 
   const removePhoto = (u) => setForm((f) => ({ ...f, photos: f.photos.filter((p) => p !== u) }));
+
+  const onVideo = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingVideo(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const { data } = await api.post("/upload/video", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      setForm((f) => ({ ...f, video: data.url }));
+      toast.success("Video added");
+    } catch (err) {
+      toast.error(formatApiErrorDetail(err.response?.data?.detail) || "Video upload failed");
+    } finally {
+      setUploadingVideo(false);
+    }
+  };
 
   const validStep1 = form.title.trim() && form.category && form.price !== "" && form.photos.length > 0;
 
@@ -166,7 +185,27 @@ export default function Sell() {
                 </label>
               </div>
               <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 8, display: "flex", gap: 6, alignItems: "center" }}>
-                <ImageIcon size={13} /> A video slot opens here when video launches. Photos only for now.
+                <ImageIcon size={13} /> JPG/PNG/WEBP, up to 8MB each.
+              </div>
+            </div>
+
+            <div className="field">
+              <label>Product video (optional)</label>
+              {form.video ? (
+                <div className="video-preview" data-testid="video-preview">
+                  <video src={fileUrl(form.video)} controls className="sell-video" />
+                  <button type="button" className="btn btn-ghost" onClick={() => setForm((f) => ({ ...f, video: "" }))} data-testid="remove-video">
+                    Remove video
+                  </button>
+                </div>
+              ) : (
+                <label className="video-add" data-testid="video-add">
+                  {uploadingVideo ? <span className="mini">Uploading video…</span> : <><Video size={22} /><span className="mini">Upload a walkaround video</span></>}
+                  <input type="file" accept="video/*" hidden onChange={onVideo} data-testid="video-input" />
+                </label>
+              )}
+              <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 8 }}>
+                Pre-recorded only. Your video powers a shoppable Story on the feed.
               </div>
             </div>
 

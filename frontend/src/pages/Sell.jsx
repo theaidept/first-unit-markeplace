@@ -61,7 +61,7 @@ export default function Sell() {
 
   const removePhoto = (u) => setForm((f) => ({ ...f, photos: f.photos.filter((p) => p !== u) }));
 
-  const validStep1 = form.title.trim() && form.category && form.price !== "";
+  const validStep1 = form.title.trim() && form.category && form.price !== "" && form.photos.length > 0;
 
   const submit = async (publish) => {
     if (publish && form.photos.length === 0) {
@@ -174,7 +174,7 @@ export default function Sell() {
               <button className="btn btn-ghost" onClick={() => submit(false)} disabled={busy || !form.title.trim()} data-testid="save-draft-btn">
                 Save as draft
               </button>
-              <button className="btn btn-primary" onClick={() => setStep(3)} disabled={!validStep1} data-testid="to-review-btn">
+              <button className="btn btn-primary" onClick={() => setStep(3)} disabled={!validStep1} data-testid="to-review-btn" title={!validStep1 ? "Add a title, category, price and at least one photo" : undefined}>
                 Continue to review →
               </button>
             </div>

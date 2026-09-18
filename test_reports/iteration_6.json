@@ -1,0 +1,28 @@
+{
+  "summary": "Phase 4 marketplace (listings, categories, uploads, offers, restrictions) tested end-to-end. Backend: 15/15 pytest passed via /app/backend/tests/test_marketplace_phase4.py — verified-only gate (401 unauth, 403 unverified) on /listings, /listings/{id}, /categories, /listings/mine, POST /listings, /upload; categories exclude firearms/edged-weapons; POST /upload returns /api/files/... URL which is fetchable via GET /api/files/{path} (200 image/png); restricted category 'firearms' => 400; blocked keyword ('knife') => status='flagged' with flagged_reason, NOT in public feed, report row created; save-as-draft => status='draft', in /listings/mine but not feed; feed q/category/featured params work; make-offer + buy-now + accept/decline/withdraw transition correctly; seller cannot offer on own listing (400); non-seller cannot accept (403); public seller layer never leaks email/phone/password_hash. Frontend: pass.officer login → /marketplace shows all 7 chips (chip-all/gear/vehicles/art/featured/near/video), featured-stories-placeholder, sell-cta-btn; video chip is inert (clicking does not change active chip); /sell wizard exposes sell-title/category/condition/price/location/description/photo-input/to-review-btn/publish-btn; category select excludes 'firearms' and includes gear/vehicles/art; photo upload succeeds and thumbnail img.naturalWidth=1; publish redirects to /listing/{id}; owner view of detail page shows seller-card+message-btn(disabled)+meetup-block with meetup-input+meetup-save (no Buy Now/Make Offer for owner — correct); as buyer (review.emt) the same detail page shows buy-now-btn + make-offer-btn + payment note; submitting offer creates a pending entry with Withdraw button ('Offer sent to the seller' toast); seller card renders PD UNIT 22 handle + Verified badge + agency (no real name/email exposed).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_marketplace_phase4.py",
+    "/app/test_reports/pytest/pytest_phase4.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now ~1450 lines — auth, email, SMS, verification, profiles, admin, storage, listings, offers all in one file. Please split into routers (auth, verification, profiles, marketplace, admin, storage) before Phase 5.",
+    "GET /api/files/{path} calls the object-store synchronously in a thread on EVERY image request and disables browser sharing (Cache-Control: private, max-age=3600). Consider signed short-lived proxy URLs, or at least a small in-memory LRU + ETag/If-None-Match to avoid re-fetching hot listing photos from the object store on every scroll.",
+    "Blocked keyword scan only runs when body.publish is True. If a draft is edited later without setting publish=true again, the draft can carry a prohibited term indefinitely. Consider scanning on every save AND blocking flagged drafts from being toggled to live via the update path (currently PUT re-checks correctly — OK, but there is no admin unflag route).",
+    "The BLOCKED_KEYWORDS list has legitimate false positives (e.g. 'blade' inside 'shoulder blade harness', 'katana' as an art item title). No allowlist/override path exists for Trust & Safety.",
+    "public_profile() still contains legacy normalization (pv=='visible' → 'photo'); seed_admins() still writes 'visible' — was flagged in iter5, still not addressed.",
+    "listing_public() calls seller_public() which does two DB round-trips per card — feed of N listings does 2N queries. Batch fetch profiles+users by seller_id set before serializing.",
+    "Sell wizard 'Continue to review' allows advancing with zero photos; publish then fails backend-side with 400. Better to disable to-review-btn until at least one photo is attached OR at least show inline error before the final publish click."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_marketplace_phase4.py"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Admin: admin@firstunit.us / FirstUnit#Admin2026! ; Seller: pass.officer@pd.gov / Passw0rd! ; Buyer: review.emt@ems.gov / Passw0rd!",
+  "seed_data_creation": "Test-run created several live and one flagged listing under pass.officer, plus a $150 pending offer + prior buy-now/withdraw/decline transitions from pytest. No cleanup performed (test data prefixed with TEST_ or unique uuids).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Phase 4 marketplace is fully green. Backend regression suites available: test_first_unit.py (P1), test_verification_phase2.py (P2), test_profiles_phase3.py (P3), test_marketplace_phase4.py (P4). Next phases (messaging, video, payments) MUST live behind require_verified. Consider modularising server.py into routers before adding more surface area. Note: GET /api/files/{path} authenticates via cookie — same-origin <img> in-app works; if any external embedding is needed later, a signed URL scheme will be required."
+}

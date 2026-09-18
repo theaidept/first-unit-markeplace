@@ -51,6 +51,16 @@ First Unit is a mobile-first, **verified-only marketplace WEBSITE** (standard re
 - **Frontend:** MyProfile (live-preview + edit form with visibility options & undercover toggle), Members directory grid, MemberProfile view; AppNav links (Marketplace/Members/Profile); ProfileCard + AvatarRing initials support.
 - Tested: 100% backend + 100% frontend (iteration_5), zero issues.
 
+## Implemented (2026-09-18) — Phase 4 Marketplace Core
+- **Categories:** Gear & Equipment / Vehicles / Art & Personal Items (active). Firearms & Edged Weapons exist but `is_restricted=true, active=false` (blocked); restrictable categories behind policy gate.
+- **Restriction enforcement (constraint 4) from day one:** restricted category => 400; firearm/knife blocked-keyword scan on publish => listing status `flagged`, kept out of feed, Report row created.
+- **Listings:** POST/PUT with draft|live|flagged|removed|sold; Save-as-draft; fields title/category/condition/location/description/price/photos[]/meetup_note. Feed GET /listings (q + category + featured), GET /listings/{id}, GET /listings/mine.
+- **Photos:** Emergent object storage (EMERGENT_LLM_KEY); POST /upload => /api/files/{path}; GET /files/{path} cookie-authed image serving.
+- **Offers:** make offer / buy-now (intent at asking price, NO payment) / accept / decline / withdraw with correct state transitions; seller can't offer on own listing.
+- **Frontend:** Sell wizard (Step 1 Details & Media photos-only, Step 3 Review; Step 2 Pricing shown-disabled), feed/dashboard (search + all chips + Featured Stories placeholder + inert Has-video chip), product detail (gallery, seller card + inert Message, Buy Now/Make Offer, description, Meet-up Guidance), offers management.
+- All routes behind require_verified; sellers shown via public profile layer only.
+- Tested: 100% backend + 100% frontend (iteration_6), zero issues.
+
 ## Backlog (prioritized)
 - **P0 — Phase 2:** Real ID.me verification behind provider abstraction; SMS status alerts (Twilio) using stored phone; full public Profile UI + undercover controls.
 - **P1 — Phase 3:** Category system (firearms/knives blocked + blocked-keyword filter), Listing CRUD, photos/video upload (object storage), Offers, Transaction (Lane A PayPal/Venmo handoff).

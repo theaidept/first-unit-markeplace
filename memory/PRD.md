@@ -70,6 +70,13 @@ First Unit is a mobile-first, **verified-only marketplace WEBSITE** (standard re
 - Tested: 100% backend + 100% frontend (iteration_7), zero issues.
 - **PENDING USER INPUT:** real PayPal Connect Client ID/Secret (sandbox) to flip PayPal from handle-capture fallback to OAuth (no code changes beyond env + restart).
 
+## Implemented (2026-09-18) — Phase 6 Video + Shoppable Stories
+- **Video on listings:** POST /upload/video (object storage, MP4/MOV/WEBM/M4V, <120MB) added in the Sell wizard alongside photos; listing carries `video`, `has_video` derived; served via GET /files/{path}. "Has video" feed chip now active (has_video filter).
+- **Featured Stories reel** on dashboard: horizontal reel of avatar-ring story cards (price caption) opening a vertical Story viewer that plays the product video.
+- **Shoppable overlay (required):** every story viewer has a "View & Buy" overlay → /listing/{listing_id}; GET /stories only returns active stories resolving to a live listing with video; seller shown via public layer only.
+- **Story entity** {listing, video, order, active} auto-synced on publish (created when live+video, deactivated otherwise). Pre-recorded only — no live streaming.
+- Tested: 100% backend + 100% frontend (iteration_8), zero issues.
+
 ## Backlog (prioritized)
 - **P0 — Phase 2:** Real ID.me verification behind provider abstraction; SMS status alerts (Twilio) using stored phone; full public Profile UI + undercover controls.
 - **P1 — Phase 3:** Category system (firearms/knives blocked + blocked-keyword filter), Listing CRUD, photos/video upload (object storage), Offers, Transaction (Lane A PayPal/Venmo handoff).

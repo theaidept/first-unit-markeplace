@@ -1,0 +1,78 @@
+@import url("https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+    --navy: #0b1f42;
+    --navy-2: #16305c;
+    --red: #a6192e;
+    --red-2: #7c1122;
+    --steel: #3a3f47;
+    --steel-2: #6b7078;
+    --steel-3: #9aa0aa;
+    --gold: #9c7a30;
+    --text: #12151b;
+    --text-dim: #50565f;
+    --text-faint: #868c96;
+    --panel: #ffffff;
+    --panel-2: #f2f3f5;
+    --hairline: rgba(11, 20, 34, 0.12);
+    --wrap: 1240px;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: "Inter", system-ui, sans-serif;
+    color: var(--text);
+    background: var(--panel);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+    background: var(--red);
+    color: #fff;
+}
+
+/* Keep shadcn tokens working */
+@layer base {
+    :root {
+        --background: 0 0% 100%;
+        --foreground: 0 0% 3.9%;
+        --card: 0 0% 100%;
+        --card-foreground: 0 0% 3.9%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 0 0% 3.9%;
+        --primary: 0 0% 9%;
+        --primary-foreground: 0 0% 98%;
+        --secondary: 0 0% 96.1%;
+        --secondary-foreground: 0 0% 9%;
+        --muted: 0 0% 96.1%;
+        --muted-foreground: 0 0% 45.1%;
+        --accent: 0 0% 96.1%;
+        --accent-foreground: 0 0% 9%;
+        --destructive: 0 84.2% 60.2%;
+        --destructive-foreground: 0 0% 98%;
+        --border: 0 0% 89.8%;
+        --input: 0 0% 89.8%;
+        --ring: 0 0% 3.9%;
+        --radius: 2px;
+    }
+}
+
+@layer base {
+    body {
+        @apply text-foreground;
+    }
+}

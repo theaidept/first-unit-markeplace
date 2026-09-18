@@ -9,6 +9,7 @@ import Register from "./pages/Register";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import VerificationPending from "./pages/VerificationPending";
+import VerificationCallback from "./pages/VerificationCallback";
 import Marketplace from "./pages/Marketplace";
 import AdminPanel from "./pages/AdminPanel";
 
@@ -28,6 +29,14 @@ function App() {
             element={
               <RequireAuth>
                 <VerificationPending />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/verification/callback"
+            element={
+              <RequireAuth>
+                <VerificationCallback />
               </RequireAuth>
             }
           />

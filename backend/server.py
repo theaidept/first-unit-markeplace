@@ -20,6 +20,7 @@ from urllib.parse import urlparse
 import jwt
 import bcrypt
 import httpx
+from providers import get_provider, pkce_pair
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -321,6 +322,125 @@ def reset_email_html(reset_link: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# SMS (Twilio) + status-alert notifications
+# ---------------------------------------------------------------------------
+async def send_sms(to: str, body: str) -> Optional[str]:
+    sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
+    token = os.environ.get("TWILIO_AUTH_TOKEN", "")
+    frm = os.environ.get("TWILIO_FROM_NUMBER", "")
+    if not (sid and token and frm):
+        logger.info(f"[SMS mock] to={to}: {body}")
+        return None
+    num = (to or "").strip()
+    if not num.startswith("+"):
+        digits = re.sub(r"\D", "", num)
+        num = "+1" + digits if len(digits) == 10 else "+" + digits
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.post(
+                f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json",
+                data={"From": frm, "To": num, "Body": body},
+                auth=(sid, token),
+            )
+        r.raise_for_status()
+        return r.json().get("sid")
+    except Exception as e:
+        logger.error(f"SMS send failed: {e}")
+        return None
+
+
+ALERT_COPY = {
+    "submitted": ("First Unit — verification received",
+                  "Your First Unit verification application was received. We're checking your service now."),
+    "review": ("First Unit — manual review in progress",
+               "Your First Unit verification is in manual review by our Trust & Safety team. We'll notify you soon."),
+    "approved": ("First Unit — you're verified",
+                 "You're verified. Welcome to First Unit — the marketplace is now unlocked."),
+    "rejected": ("First Unit — verification not approved",
+                 "We couldn't verify your first-responder status. Reply to this email to appeal."),
+}
+
+
+def alert_email_html(line: str) -> str:
+    link = f"{FRONTEND_URL}/verification"
+    return (
+        f'<table role="presentation" width="100%" style="background:#f2f3f5;padding:32px 0">'
+        f'<tr><td align="center"><table role="presentation" width="520" '
+        f'style="background:#ffffff;border:1px solid #d9dce1;font-family:Arial,Helvetica,sans-serif">'
+        f'<tr><td style="background:#0b1f42;padding:20px 28px;color:#ffffff;font-size:18px;'
+        f'letter-spacing:2px;font-weight:bold">FIRST UNIT</td></tr>'
+        f'<tr><td style="padding:28px">'
+        f'<h1 style="font-size:19px;color:#12151b;margin:0 0 12px">Verification update</h1>'
+        f'<p style="font-size:14px;color:#50565f;line-height:1.6">{escape(line)}</p>'
+        f'<p style="margin:22px 0"><a href="{link}" style="background:#a6192e;color:#ffffff;'
+        f'text-decoration:none;padding:12px 24px;font-size:14px;font-weight:bold;border-radius:2px;'
+        f'display:inline-block">View your status</a></p>'
+        f'<p style="font-size:12px;color:#868c96">First Unit will never ask you for your password '
+        f'or credential documents by email.</p></td></tr>'
+        f'<tr><td style="padding:16px 28px;background:#f2f3f5;font-size:11px;color:#868c96">'
+        f'Sent by First Unit — a verified marketplace for first responders.</td></tr>'
+        f'</table></td></tr></table>'
+    )
+
+
+async def notify(user: dict, event_type: str):
+    subject, line = ALERT_COPY.get(event_type, (None, None))
+    if not subject:
+        return
+    if user.get("email"):
+        try:
+            await send_email(to=user["email"], subject=subject, html=alert_email_html(line))
+        except Exception as e:
+            logger.error(f"alert email failed: {e}")
+    if user.get("phone"):
+        try:
+            await send_sms(user["phone"], f"First Unit: {line}")
+        except Exception as e:
+            logger.error(f"alert sms failed: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Verification state helpers + provider result application
+# ---------------------------------------------------------------------------
+async def set_verification_state(user_id, status, vid, provider_name=None,
+                                 provider_ref=None, outcome=None):
+    await db.users.update_one({"id": user_id}, {"$set": {"verification_status": status}})
+    upd = {"current_state": status, "updated_at": now_iso()}
+    if provider_name is not None:
+        upd["provider"] = provider_name
+    if provider_ref is not None:
+        upd["provider_reference"] = provider_ref
+    if outcome is not None:
+        upd["outcome"] = outcome
+    await db.verification_records.update_one({"id": vid}, {"$set": upd})
+    await db.profiles.update_one({"user_id": user_id},
+                                 {"$set": {"verified_badge": status == "approved"}})
+
+
+async def apply_provider_result(user: dict, vid: str, result) -> dict:
+    uid = user["id"]
+    if result.outcome == "pass":
+        await log_verification_event(vid, "ID.me database match", "ID.me Gateway", "Matched")
+        await set_verification_state(uid, "approved", vid, result.provider,
+                                     result.provider_reference, "approved")
+        await log_verification_event(vid, "Account activation", "System", "Approved")
+        await notify(user, "approved")
+        return {"mode": "result", "verification_status": "approved"}
+    if result.outcome == "review":
+        await log_verification_event(vid, "ID.me database check inconclusive", "ID.me Gateway", "In review")
+        await set_verification_state(uid, "human_review", vid, result.provider,
+                                     result.provider_reference, None)
+        await log_verification_event(vid, "Routed to manual review", "Trust & Safety Team", "In review")
+        await notify(user, "review")
+        return {"mode": "result", "verification_status": "human_review"}
+    await log_verification_event(vid, "ID.me credential check failed", "ID.me Gateway", "Rejected")
+    await set_verification_state(uid, "rejected", vid, result.provider,
+                                 result.provider_reference, "rejected")
+    await notify(user, "rejected")
+    return {"mode": "result", "verification_status": "rejected"}
+
+
+# ---------------------------------------------------------------------------
 # Request models
 # ---------------------------------------------------------------------------
 class RegisterBody(BaseModel):
@@ -346,6 +466,20 @@ class ResetBody(BaseModel):
 class SetVerificationBody(BaseModel):
     verification_status: VerificationStatus
     note: Optional[str] = None
+
+
+class PrescreenBody(BaseModel):
+    responder_type: ResponderType
+    service_status: ServiceStatus
+    agency: str = Field(min_length=1)
+    credential_number: str = Field(default="")
+    rank: Optional[str] = None
+    years_of_service: Optional[str] = None
+
+
+class DecisionBody(BaseModel):
+    decision: str  # "approve" | "reject"
+    reason: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -611,6 +745,134 @@ async def admin_set_verification(user_id: str, body: SetVerificationBody,
         "timestamp": now_iso(),
     })
     return {"status": "ok", "verification_status": new_status}
+
+
+@api.get("/verification/config")
+async def verification_config(user: dict = Depends(get_current_user)):
+    provider = get_provider()
+    return {"provider": provider.name, "oauth": provider.is_oauth_configured()}
+
+
+@api.post("/verification/submit")
+async def verification_submit(body: PrescreenBody, user: dict = Depends(get_current_user)):
+    if user.get("verification_status") == "approved":
+        raise HTTPException(status_code=400, detail="Your account is already verified")
+    uid = user["id"]
+    provider = get_provider()
+    prescreen = {
+        "responder_type": body.responder_type.value,
+        "service_status": body.service_status.value,
+        "agency": body.agency.strip(),
+        "credential_number": body.credential_number.strip(),
+        "rank": (body.rank or "").strip() or None,
+        "years_of_service": (body.years_of_service or "").strip() or None,
+    }
+    # Persist member-entered fields (NOT documents) + set identity fields on the user.
+    await db.users.update_one({"id": uid}, {"$set": {
+        "responder_type": prescreen["responder_type"],
+        "service_status": prescreen["service_status"],
+    }})
+    rec = await db.verification_records.find_one({"user_id": uid})
+    vid = rec["id"]
+    await db.verification_records.update_one({"id": vid}, {"$set": {
+        "prescreen": prescreen, "provider": provider.name,
+        "current_state": "pre_screen", "updated_at": now_iso(),
+    }})
+    await db.users.update_one({"id": uid}, {"$set": {"verification_status": "pre_screen"}})
+    await log_verification_event(vid, "Application submitted", "System", "Received")
+    await notify(user, "submitted")
+
+    # Step 2 — credential validation
+    await set_verification_state(uid, "validating", vid, provider.name)
+
+    if provider.is_oauth_configured():
+        state = secrets.token_urlsafe(24)
+        verifier, challenge = pkce_pair()
+        await db.oauth_states.insert_one({
+            "state": state, "verifier": verifier, "user_id": uid,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+        })
+        await log_verification_event(vid, "Redirected to ID.me for validation", "ID.me Gateway", "Pending")
+        return {"mode": "redirect", "authorize_url": provider.authorize_url(state, challenge)}
+
+    # Mock mode — deterministic outcome so the flow is fully testable now.
+    result = provider.evaluate_mock(prescreen)
+    return await apply_provider_result(user, vid, result)
+
+
+@api.get("/verification/idme/callback")
+async def idme_callback(code: str, state: str, user: dict = Depends(get_current_user)):
+    st = await db.oauth_states.find_one({"state": state, "user_id": user["id"]})
+    if not st:
+        raise HTTPException(status_code=400, detail="Invalid or expired verification state")
+    provider = get_provider()
+    try:
+        result = await provider.evaluate_callback(code, st["verifier"])
+    except Exception as e:
+        logger.error(f"idme callback failed: {e}")
+        raise HTTPException(status_code=502, detail="Verification provider error")
+    await db.oauth_states.delete_one({"state": state})
+    rec = await db.verification_records.find_one({"user_id": user["id"]})
+    return await apply_provider_result(user, rec["id"], result)
+
+
+# ---------------------------------------------------------------------------
+# Admin — verification review queue
+# ---------------------------------------------------------------------------
+@api.get("/admin/verification-queue")
+async def admin_verification_queue(admin: dict = Depends(require_admin)):
+    recs = await db.verification_records.find(
+        {"current_state": "human_review"}, {"_id": 0}
+    ).sort("updated_at", 1).to_list(500)
+    out = []
+    for rec in recs:
+        u = await db.users.find_one({"id": rec["user_id"]}, {"_id": 0, "password_hash": 0})
+        if not u:
+            continue
+        out.append({
+            "user_id": rec["user_id"],
+            "email": u["email"],
+            "phone": u.get("phone"),
+            "provider": rec.get("provider"),
+            "outcome": rec.get("outcome"),
+            "provider_reference": rec.get("provider_reference"),
+            "prescreen": rec.get("prescreen"),
+            "updated_at": rec.get("updated_at"),
+        })
+    return {"queue": out}
+
+
+@api.post("/admin/verification/{user_id}/decision")
+async def admin_verification_decision(user_id: str, body: DecisionBody,
+                                      admin: dict = Depends(require_admin)):
+    user = await db.users.find_one({"id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    rec = await db.verification_records.find_one({"user_id": user_id})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Verification record not found")
+    vid = rec["id"]
+    reviewer = admin["email"]
+    if body.decision == "approve":
+        await log_verification_event(vid, "Agency confirmation approved", reviewer, "Approved")
+        await set_verification_state(user_id, "approved", vid, outcome="approved")
+        await log_verification_event(vid, "Account activation", "System", "Approved")
+        await notify(user, "approved")
+        final = "approved"
+    elif body.decision == "reject":
+        reason = (body.reason or "No reason provided").strip()
+        await log_verification_event(vid, f"Rejected in review: {reason}", reviewer, "Rejected")
+        await set_verification_state(user_id, "rejected", vid, outcome="rejected")
+        await notify(user, "rejected")
+        final = "rejected"
+    else:
+        raise HTTPException(status_code=400, detail="decision must be 'approve' or 'reject'")
+    await db.admin_actions.insert_one({
+        "id": str(uuid.uuid4()), "admin_id": admin["id"], "action": f"verification_{body.decision}",
+        "target_type": "user", "target_id": user_id,
+        "detail": {"reason": body.reason}, "timestamp": now_iso(),
+    })
+    return {"status": "ok", "verification_status": final}
 
 
 @api.get("/")

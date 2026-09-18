@@ -9,17 +9,17 @@ import {
   Clock,
   Play,
   BadgeCheck,
+  ShoppingBag,
 } from "lucide-react";
 import { Brand } from "../components/Brand";
 import { VerifiedBadge } from "../components/VerifiedBadge";
 import { AvatarRing } from "../components/AvatarRing";
 import { Reveal } from "../components/Reveal";
-import { IMG } from "../lib/assets";
+import { IMG, STORY_IMG } from "../lib/assets";
 
 const USPS = [
   {
     icon: ShieldCheck,
-    feat: true,
     title: "Verified-only membership",
     body: "Every account is checked against agency records through ID.me, with a human reviewer on edge cases. No verification, no marketplace access.",
   },
@@ -65,6 +65,7 @@ const STORIES = [
   ["Medic Bag — Full", "$150"],
   ["Dispatch Headset", "$45"],
 ];
+const SEG = [3, 1, 2, 4, 2, 5];
 
 const CATS = [
   ["Gear & Equipment", "1,204 listings", "c1"],
@@ -92,13 +93,15 @@ export default function Landing() {
 
       {/* HERO */}
       <section className="hero">
+        <span className="hero-top-rule" aria-hidden />
+        <span className="grain" aria-hidden />
         <div className="wrap hero-grid">
           <motion.div
             initial={{ opacity: 0, y: 22 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6 }}
           >
-            <span className="eyebrow">Verified First Responders Only</span>
+            <span className="eyebrow tick">Verified First Responders Only</span>
             <h1>
               Buy and sell inside
               <br />a circle that already
@@ -137,6 +140,11 @@ export default function Landing() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.15 }}
           >
+            <div className="hc-progress" aria-hidden>
+              <span className="active" />
+              <span />
+              <span />
+            </div>
             <div className="media" style={{ backgroundImage: `url(${IMG.heroGear})` }}>
               <div className="play-pill">
                 <span className="dot" />
@@ -157,55 +165,120 @@ export default function Landing() {
               </div>
               <div style={{ fontSize: 11, color: "var(--text-faint)" }}>2h ago</div>
             </div>
+
+            <div className="hc-badge" aria-hidden>
+              <ShieldCheck size={22} />
+            </div>
           </motion.div>
         </div>
       </section>
 
-      {/* USPS */}
+      {/* WHY — bento */}
       <section className="section">
         <div className="wrap">
           <Reveal className="section-head">
-            <span className="eyebrow">Why First Unit</span>
+            <span className="eyebrow tick">Why First Unit</span>
             <h2>Built different, on purpose.</h2>
             <p>
               Every feature exists to protect trust inside the community — not to chase
               generic marketplace growth.
             </p>
           </Reveal>
-          <div className="usp-grid">
-            {USPS.map((u, i) => (
-              <Reveal key={u.title} delay={(i % 3) * 0.06}>
-                <div className={`usp-card ${u.feat ? "feat" : ""}`}>
-                  <div className="ico">
-                    <u.icon />
-                  </div>
-                  <h3>{u.title}</h3>
-                  <p>{u.body}</p>
-                </div>
-              </Reveal>
-            ))}
+
+          <div className="why-bento">
+            {/* Feature: verification */}
+            <Reveal className="bento feature">
+              <div className="ico">
+                <ShieldCheck />
+              </div>
+              <h3>{USPS[0].title}</h3>
+              <p>{USPS[0].body}</p>
+              <VerifiedBadge label="Every member verified" />
+            </Reveal>
+
+            <Reveal className="bento" delay={0.05}>
+              <div className="ico red">
+                <Video />
+              </div>
+              <h3>{USPS[1].title}</h3>
+              <p>{USPS[1].body}</p>
+            </Reveal>
+
+            <Reveal className="bento" delay={0.1}>
+              <div className="ico gold">
+                <Sparkles />
+              </div>
+              <h3>{USPS[2].title}</h3>
+              <p>{USPS[2].body}</p>
+            </Reveal>
+
+            <Reveal className="bento dark" delay={0.05}>
+              <div className="ico">
+                <EyeOff />
+              </div>
+              <h3>{USPS[3].title}</h3>
+              <p>{USPS[3].body}</p>
+            </Reveal>
+
+            <Reveal className="bento" delay={0.1}>
+              <div className="ico navy">
+                <Briefcase />
+              </div>
+              <h3>{USPS[4].title}</h3>
+              <p>{USPS[4].body}</p>
+            </Reveal>
+
+            <Reveal
+              className="bento gold"
+              style={{ gridColumn: "1 / -1", flexDirection: "row", alignItems: "center", minHeight: 118, justifyContent: "flex-start", gap: 22 }}
+            >
+              <div className="ico gold" style={{ marginBottom: 0, flex: "none" }}>
+                <Clock />
+              </div>
+              <div>
+                <h3 style={{ margin: "0 0 6px" }}>{USPS[5].title}</h3>
+                <p style={{ maxWidth: 720 }}>{USPS[5].body}</p>
+              </div>
+            </Reveal>
           </div>
         </div>
       </section>
 
-      {/* STORIES */}
-      <section className="section alt">
+      {/* STORIES — shoppable reel */}
+      <section className="section stories-section">
         <div className="wrap">
           <Reveal className="section-head">
-            <span className="eyebrow">Featured this week</span>
+            <span className="eyebrow tick">Featured this week</span>
             <h2>Tap a story, watch the listing.</h2>
           </Reveal>
-          <Reveal className="stories-row">
-            {STORIES.map(([name, price]) => (
-              <div className="story" key={name}>
-                <div className="ring">
-                  <div className="inner">
-                    <Play fill="currentColor" />
-                  </div>
+          <Reveal className="reel">
+            {STORIES.map(([name, price], i) => (
+              <div className="sreel" key={name}>
+                <div className="thumb" style={{ backgroundImage: `url(${STORY_IMG[name]})` }} />
+                <div className="s-progress" aria-hidden>
+                  {Array.from({ length: 5 }).map((_, k) => (
+                    <i key={k} className={k < SEG[i] ? "on" : ""} />
+                  ))}
                 </div>
-                <div className="cap">
-                  <b>{name}</b>
-                  {price}
+                <div className="s-top">
+                  <AvatarRing size="sm" />
+                  {i === 0 && (
+                    <span className="live">
+                      <span className="dot" /> LIVE
+                    </span>
+                  )}
+                </div>
+                <div className="play" aria-hidden>
+                  <Play size={20} fill="currentColor" />
+                </div>
+                <div className="s-foot">
+                  <div className="nm">{name}</div>
+                  <div className="row">
+                    <div className="pr">{price}</div>
+                    <div className="shop" aria-hidden>
+                      <ShoppingBag size={15} />
+                    </div>
+                  </div>
                 </div>
               </div>
             ))}
@@ -217,7 +290,7 @@ export default function Landing() {
       <section className="section pull-tight" id="how">
         <div className="wrap">
           <Reveal className="section-head">
-            <span className="eyebrow">How verification works</span>
+            <span className="eyebrow tick">How verification works</span>
             <h2>Four steps. Full transparency.</h2>
           </Reveal>
           <div className="steps-wrap">
@@ -239,8 +312,9 @@ export default function Landing() {
         className="community-band pull-up"
         style={{ backgroundImage: `url(${IMG.heroGroup})` }}
       >
+        <span className="grain" aria-hidden />
         <div className="wrap">
-          <span className="eyebrow" style={{ color: "#ff6b7d" }}>
+          <span className="eyebrow tick" style={{ color: "#ff8090" }}>
             One community
           </span>
           <h2 className="oswald" style={{ fontSize: 38, margin: "12px 0 14px", maxWidth: 620 }}>
@@ -257,7 +331,7 @@ export default function Landing() {
       <section className="section">
         <div className="wrap">
           <Reveal className="section-head">
-            <span className="eyebrow">What's on First Unit</span>
+            <span className="eyebrow tick">What's on First Unit</span>
             <h2>Gear, art, vehicles — anything but risk.</h2>
             <p>
               Firearms and edged weapons are excluded at launch by policy. Everything else
@@ -281,8 +355,9 @@ export default function Landing() {
 
       {/* CTA */}
       <section className="cta-band">
+        <span className="grain" aria-hidden />
         <div className="wrap">
-          <span className="eyebrow" style={{ color: "#ff6b7d" }}>
+          <span className="eyebrow tick" style={{ color: "#ff8090" }}>
             Join the founding circle
           </span>
           <h2>

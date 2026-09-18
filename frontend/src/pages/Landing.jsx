@@ -13,6 +13,7 @@ import {
 import { Brand } from "../components/Brand";
 import { VerifiedBadge } from "../components/VerifiedBadge";
 import { AvatarRing } from "../components/AvatarRing";
+import { Reveal } from "../components/Reveal";
 import { IMG } from "../lib/assets";
 
 const USPS = [
@@ -163,30 +164,25 @@ export default function Landing() {
       {/* USPS */}
       <section className="section">
         <div className="wrap">
-          <div className="section-head">
+          <Reveal className="section-head">
             <span className="eyebrow">Why First Unit</span>
             <h2>Built different, on purpose.</h2>
             <p>
               Every feature exists to protect trust inside the community — not to chase
               generic marketplace growth.
             </p>
-          </div>
+          </Reveal>
           <div className="usp-grid">
             {USPS.map((u, i) => (
-              <motion.div
-                key={u.title}
-                className={`usp-card ${u.feat ? "feat" : ""}`}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ duration: 0.4, delay: i * 0.05 }}
-              >
-                <div className="ico">
-                  <u.icon />
+              <Reveal key={u.title} delay={(i % 3) * 0.06}>
+                <div className={`usp-card ${u.feat ? "feat" : ""}`}>
+                  <div className="ico">
+                    <u.icon />
+                  </div>
+                  <h3>{u.title}</h3>
+                  <p>{u.body}</p>
                 </div>
-                <h3>{u.title}</h3>
-                <p>{u.body}</p>
-              </motion.div>
+              </Reveal>
             ))}
           </div>
         </div>
@@ -195,11 +191,11 @@ export default function Landing() {
       {/* STORIES */}
       <section className="section alt">
         <div className="wrap">
-          <div className="section-head">
+          <Reveal className="section-head">
             <span className="eyebrow">Featured this week</span>
             <h2>Tap a story, watch the listing.</h2>
-          </div>
-          <div className="stories-row">
+          </Reveal>
+          <Reveal className="stories-row">
             {STORIES.map(([name, price]) => (
               <div className="story" key={name}>
                 <div className="ring">
@@ -213,24 +209,26 @@ export default function Landing() {
                 </div>
               </div>
             ))}
-          </div>
+          </Reveal>
         </div>
       </section>
 
       {/* HOW */}
-      <section className="section" id="how">
+      <section className="section pull-tight" id="how">
         <div className="wrap">
-          <div className="section-head">
+          <Reveal className="section-head">
             <span className="eyebrow">How verification works</span>
             <h2>Four steps. Full transparency.</h2>
-          </div>
+          </Reveal>
           <div className="steps-wrap">
-            {STEPS.map((s) => (
-              <div className="step" key={s.n}>
-                <div className="num">{s.n}</div>
-                <h4>{s.t}</h4>
-                <p>{s.p}</p>
-              </div>
+            {STEPS.map((s, i) => (
+              <Reveal key={s.n} delay={i * 0.08}>
+                <div className="step">
+                  <div className="num">{s.n}</div>
+                  <h4>{s.t}</h4>
+                  <p>{s.p}</p>
+                </div>
+              </Reveal>
             ))}
           </div>
         </div>
@@ -238,7 +236,7 @@ export default function Landing() {
 
       {/* COMMUNITY BAND */}
       <section
-        className="community-band"
+        className="community-band pull-up"
         style={{ backgroundImage: `url(${IMG.heroGroup})` }}
       >
         <div className="wrap">
@@ -258,22 +256,24 @@ export default function Landing() {
       {/* CATEGORIES */}
       <section className="section">
         <div className="wrap">
-          <div className="section-head">
+          <Reveal className="section-head">
             <span className="eyebrow">What's on First Unit</span>
             <h2>Gear, art, vehicles — anything but risk.</h2>
             <p>
               Firearms and edged weapons are excluded at launch by policy. Everything else
               your community wants to trade finds a home here.
             </p>
-          </div>
+          </Reveal>
           <div className="cats-strip">
-            {CATS.map(([name, count, c]) => (
-              <div className={`cat-tile ${c}`} key={name}>
-                <div>
-                  <b>{name}</b>
-                  <span>{count}</span>
+            {CATS.map(([name, count, c], i) => (
+              <Reveal key={name} delay={i * 0.06}>
+                <div className={`cat-tile ${c}`}>
+                  <div>
+                    <b>{name}</b>
+                    <span>{count}</span>
+                  </div>
                 </div>
-              </div>
+              </Reveal>
             ))}
           </div>
         </div>

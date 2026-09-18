@@ -1069,6 +1069,64 @@ table.log tr:last-child td {
     letter-spacing: 0.1em;
 }
 
+/* ---------- Scroll reveal ---------- */
+.reveal {
+    opacity: 0;
+    transform: translateY(18px);
+    transition:
+        opacity 0.6s ease,
+        transform 0.6s ease;
+    will-change: opacity, transform;
+}
+.reveal.in {
+    opacity: 1;
+    transform: none;
+}
+@media (prefers-reduced-motion: reduce) {
+    .reveal {
+        opacity: 1;
+        transform: none;
+        transition: none;
+    }
+}
+
+/* ---------- Story hover (premium interaction) ---------- */
+.story {
+    cursor: pointer;
+}
+.story .ring {
+    transition:
+        transform 0.2s ease,
+        box-shadow 0.2s ease;
+}
+.story:hover .ring {
+    transform: translateY(-4px) scale(1.06);
+    box-shadow: 0 16px 30px -16px rgba(11, 31, 66, 0.65);
+}
+.story:hover .cap b {
+    color: var(--red);
+}
+
+/* ---------- Category card lift ---------- */
+.cat-tile {
+    box-shadow: 0 10px 24px -18px rgba(11, 31, 66, 0.55);
+    transition:
+        transform 0.2s ease,
+        box-shadow 0.2s ease;
+}
+.cat-tile:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 22px 42px -22px rgba(11, 31, 66, 0.6);
+}
+
+/* ---------- Tightened rhythm: steps -> banner ---------- */
+.section.pull-tight {
+    padding-bottom: 44px;
+}
+.community-band.pull-up {
+    padding-top: 62px;
+}
+
 /* ---------- Responsive ---------- */
 @media (max-width: 900px) {
     .hero-grid {

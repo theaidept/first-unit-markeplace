@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import {
   ShieldCheck,
   Video,
@@ -75,6 +75,7 @@ const CATS = [
 ];
 
 export default function Landing() {
+  const reduce = useReducedMotion();
   return (
     <div className="fu-app" data-testid="landing-page">
       <header className="site-header">
@@ -97,8 +98,8 @@ export default function Landing() {
         <span className="grain" aria-hidden />
         <div className="wrap hero-grid">
           <motion.div
-            initial={{ opacity: 0, y: 22 }}
-            animate={{ opacity: 1, y: 0 }}
+            initial={reduce ? false : { opacity: 0, y: 22 }}
+            animate={reduce ? false : { opacity: 1, y: 0 }}
             transition={{ duration: 0.6 }}
           >
             <span className="eyebrow tick">Verified First Responders Only</span>
@@ -136,8 +137,8 @@ export default function Landing() {
 
           <motion.div
             className="hero-card"
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
+            initial={reduce ? false : { opacity: 0, y: 30 }}
+            animate={reduce ? false : { opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.15 }}
           >
             <div className="hc-progress" aria-hidden>

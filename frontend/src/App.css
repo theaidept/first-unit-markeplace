@@ -1541,6 +1541,7 @@ table.log tr:last-child td {
 .sreel .thumb {
     position: absolute;
     inset: 0;
+    background-color: var(--navy);
     background-size: cover;
     background-position: center;
     transition: transform 0.5s ease;

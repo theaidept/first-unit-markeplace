@@ -1427,7 +1427,7 @@ table.log tr:last-child td {
 .story-buy-card { display: flex; align-items: center; gap: 12px; padding: 10px; background: rgba(255,255,255,.10); border: 1px solid rgba(255,255,255,.20); border-radius: 4px; backdrop-filter: blur(14px); box-shadow: 0 10px 30px -12px rgba(0,0,0,.6); }
 .sbc-thumb { flex: none; width: 52px; height: 52px; border-radius: 3px; background-color: rgba(255,255,255,.12); background-size: cover; background-position: center; border: 1px solid rgba(255,255,255,.25); }
 .sbc-info { flex: 1; min-width: 0; }
-.so-title { font-size: 13.5px; font-weight: 700; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.so-title { font-size: 13.5px; font-weight: 700; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .so-price { font-family: "Oswald", sans-serif; font-size: 22px; font-weight: 700; color: #fff; }
 .sbc-btn { flex: none; white-space: nowrap; box-shadow: 0 6px 18px -6px rgba(198,40,40,.7); }
 

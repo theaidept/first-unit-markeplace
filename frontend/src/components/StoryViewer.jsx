@@ -170,6 +170,7 @@ export const StoryViewer = ({ stories, index, onClose, onIndex }) => {
               </div>
               <motion.div
                 className="story-buy-card"
+                data-testid="story-buy-card"
                 initial={reduce ? false : { y: 24, opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
                 transition={{ delay: reduce ? 0 : 0.12, duration: 0.3, ease: "easeOut" }}

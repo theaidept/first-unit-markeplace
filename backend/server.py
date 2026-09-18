@@ -1017,7 +1017,7 @@ async def seed_admins():
                 "id": str(uuid.uuid4()), "user_id": uid, "display_handle": handle,
                 "avatar": None, "agency": "First Unit", "rank": "Administrator",
                 "years_of_service": None, "verified_badge": True,
-                "photo_visibility": "visible", "undercover": False, "created_at": now_iso(),
+                "photo_visibility": "avatar", "undercover": False, "created_at": now_iso(),
             })
         elif not verify_password(password, existing["password_hash"]):
             await db.users.update_one({"email": email},

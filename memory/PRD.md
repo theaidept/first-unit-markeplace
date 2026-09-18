@@ -43,6 +43,14 @@ First Unit is a mobile-first, **verified-only marketplace WEBSITE** (standard re
 - Tested: 15/15 Phase 2 backend + frontend 100%, zero issues.
 - **PENDING USER INPUT:** real ID.me sandbox client_id/secret and Twilio SID/token/from-number — paste to flip both integrations from MOCK to live (no code changes needed).
 
+## Implemented (2026-09-18) — Phase 3 Member Profiles + Undercover Privacy
+- **Separated identity (constraint 3):** `public_profile(profile,user)` serializer returns ONLY public-layer fields; verified-identity (real name, credential #, provider reference, prescreen) is never in any member-facing response. Audited CLEAN by tests.
+- **Public profile fields:** display_handle, optional avatar, agency, rank, years_of_service, verified_badge, photo_visibility (photo|avatar|initials), undercover, + derived initials; responder_type/service_status shown as category labels.
+- **Undercover model:** member-owned controls — avatar-ring / initials / photo, undercover toggle hides photo (and real name never public); a fully verified undercover member appears anonymous while STILL showing the Verified badge. Privacy-safe default = avatar-ring.
+- **Endpoints (all behind require_verified):** GET/PUT /profile/me, GET /members, GET /profiles/{user_id}.
+- **Frontend:** MyProfile (live-preview + edit form with visibility options & undercover toggle), Members directory grid, MemberProfile view; AppNav links (Marketplace/Members/Profile); ProfileCard + AvatarRing initials support.
+- Tested: 100% backend + 100% frontend (iteration_5), zero issues.
+
 ## Backlog (prioritized)
 - **P0 — Phase 2:** Real ID.me verification behind provider abstraction; SMS status alerts (Twilio) using stored phone; full public Profile UI + undercover controls.
 - **P1 — Phase 3:** Category system (firearms/knives blocked + blocked-keyword filter), Listing CRUD, photos/video upload (object storage), Offers, Transaction (Lane A PayPal/Venmo handoff).

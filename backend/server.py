@@ -20,8 +20,10 @@ from urllib.parse import urlparse
 import jwt
 import bcrypt
 import httpx
+import asyncio
+import requests
 from providers import get_provider, pkce_pair
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, UploadFile, File, Query, Header
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
@@ -969,6 +971,399 @@ async def admin_verification_decision(user_id: str, body: DecisionBody,
     return {"status": "ok", "verification_status": final}
 
 
+# ---------------------------------------------------------------------------
+# Object storage (Emergent-managed) for listing photos
+# ---------------------------------------------------------------------------
+STORAGE_BASE = (os.environ.get("INTEGRATION_PROXY_URL") or "").strip() or "https://integrations.emergentagent.com"
+STORAGE_URL = STORAGE_BASE.rstrip("/") + "/objstore/api/v1/storage"
+EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
+APP_NAME = "first-unit"
+_storage_key = None
+
+IMAGE_MIME = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
+
+
+def init_storage(force: bool = False):
+    global _storage_key
+    if _storage_key and not force:
+        return _storage_key
+    resp = requests.post(f"{STORAGE_URL}/init", json={"emergent_key": EMERGENT_LLM_KEY}, timeout=30)
+    resp.raise_for_status()
+    _storage_key = resp.json()["storage_key"]
+    return _storage_key
+
+
+def put_object(path: str, data: bytes, content_type: str) -> dict:
+    key = init_storage()
+    resp = requests.put(f"{STORAGE_URL}/objects/{path}",
+                        headers={"X-Storage-Key": key, "Content-Type": content_type},
+                        data=data, timeout=120)
+    if resp.status_code == 404:
+        key = init_storage(force=True)
+        resp = requests.put(f"{STORAGE_URL}/objects/{path}",
+                            headers={"X-Storage-Key": key, "Content-Type": content_type},
+                            data=data, timeout=120)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def get_object(path: str):
+    key = init_storage()
+    resp = requests.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60)
+    if resp.status_code == 404:
+        key = init_storage(force=True)
+        resp = requests.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60)
+    resp.raise_for_status()
+    return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+
+
+# ---------------------------------------------------------------------------
+# Category restriction + blocked-keyword enforcement (constraint 4)
+# ---------------------------------------------------------------------------
+BLOCKED_KEYWORDS = [
+    "firearm", "firearms", "gun", "guns", "handgun", "pistol", "revolver", "rifle",
+    "shotgun", "glock", "ar-15", "ar15", "ak-47", "ak47", "ammo", "ammunition",
+    "bullet", "bullets", "silencer", "suppressor", "magazine clip",
+    "knife", "knives", "blade", "dagger", "switchblade", "machete", "bayonet",
+    "karambit", "katana", "sword", "cleaver",
+]
+_BLOCKED_RE = re.compile(r"|".join(rf"\b{re.escape(k)}\b" for k in BLOCKED_KEYWORDS), re.I)
+
+ALLOWED_CATEGORIES = [
+    {"name": "Gear & Equipment", "slug": "gear"},
+    {"name": "Vehicles", "slug": "vehicles"},
+    {"name": "Art & Personal Items", "slug": "art"},
+]
+RESTRICTED_CATEGORIES = [
+    {"name": "Firearms", "slug": "firearms",
+     "blocked_keywords": ["gun", "firearm", "pistol", "rifle", "shotgun", "ammo"]},
+    {"name": "Edged Weapons", "slug": "edged-weapons",
+     "blocked_keywords": ["knife", "blade", "dagger", "sword", "machete"]},
+]
+CONDITIONS = {"Excellent", "Good", "Fair"}
+
+
+def scan_blocked(*texts) -> Optional[str]:
+    blob = " ".join(t for t in texts if t)
+    m = _BLOCKED_RE.search(blob)
+    return m.group(0) if m else None
+
+
+async def seed_categories():
+    for i, c in enumerate(ALLOWED_CATEGORIES):
+        await db.categories.update_one({"slug": c["slug"]}, {"$setOnInsert": {
+            "id": str(uuid.uuid4()), "name": c["name"], "slug": c["slug"],
+            "is_restricted": False, "blocked_keywords": [], "active": True, "order": i,
+            "created_at": now_iso(),
+        }}, upsert=True)
+    for c in RESTRICTED_CATEGORIES:
+        await db.categories.update_one({"slug": c["slug"]}, {"$setOnInsert": {
+            "id": str(uuid.uuid4()), "name": c["name"], "slug": c["slug"],
+            "is_restricted": True, "blocked_keywords": c["blocked_keywords"],
+            "active": False, "order": 99, "created_at": now_iso(),
+        }}, upsert=True)
+
+
+# ---------------------------------------------------------------------------
+# Listing / Offer models + serializers
+# ---------------------------------------------------------------------------
+class ListingBody(BaseModel):
+    title: str = Field(min_length=1)
+    category: str
+    condition: str
+    location: str = ""
+    description: str = ""
+    price: float = Field(ge=0)
+    photos: List[str] = []
+    meetup_note: Optional[str] = None
+    publish: bool = False  # True => go live (runs enforcement), False => save as draft
+
+
+class OfferBody(BaseModel):
+    amount: float = Field(gt=0)
+
+
+async def seller_public(seller_id: str) -> dict:
+    profile = await db.profiles.find_one({"user_id": seller_id}, {"_id": 0})
+    user = await db.users.find_one({"id": seller_id}, {"_id": 0, "password_hash": 0})
+    if not profile:
+        return {"user_id": seller_id, "display_handle": "Member", "verified_badge": False}
+    return public_profile(profile, user)
+
+
+async def listing_public(listing: dict, with_seller: bool = True) -> dict:
+    out = {
+        "id": listing["id"],
+        "seller_id": listing["seller_id"],
+        "title": listing["title"],
+        "category": listing["category"],
+        "condition": listing.get("condition"),
+        "location": listing.get("location"),
+        "description": listing.get("description"),
+        "price": listing.get("price"),
+        "photos": listing.get("photos", []),
+        "status": listing.get("status"),
+        "meetup_note": listing.get("meetup_note"),
+        "has_video": False,
+        "featured": listing.get("featured", False),
+        "created_at": listing.get("created_at"),
+    }
+    if with_seller:
+        out["seller"] = await seller_public(listing["seller_id"])
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Categories
+# ---------------------------------------------------------------------------
+@api.get("/categories")
+async def list_categories(user: dict = Depends(require_verified)):
+    cats = await db.categories.find(
+        {"active": True, "is_restricted": False}, {"_id": 0}
+    ).sort("order", 1).to_list(100)
+    return {"categories": cats}
+
+
+# ---------------------------------------------------------------------------
+# Listings
+# ---------------------------------------------------------------------------
+async def _validate_category(slug: str):
+    cat = await db.categories.find_one({"slug": slug}, {"_id": 0})
+    if not cat:
+        raise HTTPException(status_code=400, detail="Unknown category")
+    if cat.get("is_restricted") or not cat.get("active"):
+        raise HTTPException(status_code=400, detail="This category is restricted and cannot be used")
+    return cat
+
+
+@api.post("/upload")
+async def upload_photo(file: UploadFile = File(...), user: dict = Depends(require_verified)):
+    ext = (file.filename.rsplit(".", 1)[-1] if "." in (file.filename or "") else "").lower()
+    if ext not in IMAGE_MIME:
+        raise HTTPException(status_code=400, detail="Only JPG, PNG or WEBP images are allowed")
+    data = await file.read()
+    if len(data) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Image must be under 8MB")
+    path = f"{APP_NAME}/uploads/{user['id']}/{uuid.uuid4()}.{ext}"
+    try:
+        result = await asyncio.to_thread(put_object, path, data, IMAGE_MIME[ext])
+    except Exception as e:
+        logger.error(f"upload failed: {e}")
+        raise HTTPException(status_code=502, detail="Upload failed, please try again")
+    await db.files.insert_one({
+        "id": str(uuid.uuid4()), "storage_path": result["path"],
+        "original_filename": file.filename, "content_type": IMAGE_MIME[ext],
+        "size": result.get("size"), "owner_id": user["id"], "is_deleted": False,
+        "created_at": now_iso(),
+    })
+    return {"url": f"/api/files/{result['path']}", "path": result["path"]}
+
+
+@api.get("/files/{path:path}")
+async def serve_file(path: str, user: dict = Depends(require_verified)):
+    record = await db.files.find_one({"storage_path": path, "is_deleted": False})
+    if not record:
+        raise HTTPException(status_code=404, detail="File not found")
+    try:
+        data, ctype = await asyncio.to_thread(get_object, path)
+    except Exception as e:
+        logger.error(f"file fetch failed: {e}")
+        raise HTTPException(status_code=404, detail="File not found")
+    return Response(content=data, media_type=record.get("content_type", ctype),
+                    headers={"Cache-Control": "private, max-age=3600"})
+
+
+@api.post("/listings")
+async def create_listing(body: ListingBody, user: dict = Depends(require_verified)):
+    await _validate_category(body.category)
+    if body.condition not in CONDITIONS:
+        raise HTTPException(status_code=400, detail="Invalid condition")
+    lid = str(uuid.uuid4())
+    status = "draft"
+    flagged_term = None
+    if body.publish:
+        if not body.photos:
+            raise HTTPException(status_code=400, detail="Add at least one photo to publish")
+        flagged_term = scan_blocked(body.title, body.description)
+        status = "flagged" if flagged_term else "live"
+    doc = {
+        "id": lid, "seller_id": user["id"], "title": body.title.strip(),
+        "category": body.category, "condition": body.condition,
+        "location": body.location.strip(), "description": body.description.strip(),
+        "price": float(body.price), "photos": body.photos,
+        "meetup_note": (body.meetup_note or "").strip() or None,
+        "status": status, "featured": False,
+        "created_at": now_iso(), "updated_at": now_iso(),
+    }
+    await db.listings.insert_one(doc)
+    if flagged_term:
+        await db.reports.insert_one({
+            "id": str(uuid.uuid4()), "reporter": "System", "target_type": "listing",
+            "target_id": lid, "reason": f"Blocked keyword at creation: '{flagged_term}'",
+            "status": "open", "reviewer": None, "created_at": now_iso(),
+        })
+    result = await listing_public(doc, with_seller=False)
+    result["flagged_reason"] = (f"Contains a prohibited term ('{flagged_term}'). "
+                                "Sent to Trust & Safety review.") if flagged_term else None
+    return result
+
+
+@api.put("/listings/{listing_id}")
+async def update_listing(listing_id: str, body: ListingBody, user: dict = Depends(require_verified)):
+    listing = await db.listings.find_one({"id": listing_id})
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    if listing["seller_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Not your listing")
+    await _validate_category(body.category)
+    if body.condition not in CONDITIONS:
+        raise HTTPException(status_code=400, detail="Invalid condition")
+    status = listing["status"]
+    flagged_term = None
+    if body.publish:
+        if not body.photos:
+            raise HTTPException(status_code=400, detail="Add at least one photo to publish")
+        flagged_term = scan_blocked(body.title, body.description)
+        status = "flagged" if flagged_term else "live"
+    updates = {
+        "title": body.title.strip(), "category": body.category, "condition": body.condition,
+        "location": body.location.strip(), "description": body.description.strip(),
+        "price": float(body.price), "photos": body.photos,
+        "meetup_note": (body.meetup_note or "").strip() or None,
+        "status": status, "updated_at": now_iso(),
+    }
+    await db.listings.update_one({"id": listing_id}, {"$set": updates})
+    if flagged_term:
+        await db.reports.insert_one({
+            "id": str(uuid.uuid4()), "reporter": "System", "target_type": "listing",
+            "target_id": listing_id, "reason": f"Blocked keyword at publish: '{flagged_term}'",
+            "status": "open", "reviewer": None, "created_at": now_iso(),
+        })
+    listing.update(updates)
+    result = await listing_public(listing, with_seller=False)
+    result["flagged_reason"] = (f"Contains a prohibited term ('{flagged_term}'). "
+                                "Sent to Trust & Safety review.") if flagged_term else None
+    return result
+
+
+@api.get("/listings/mine")
+async def my_listings(user: dict = Depends(require_verified)):
+    docs = await db.listings.find(
+        {"seller_id": user["id"], "status": {"$ne": "removed"}}, {"_id": 0}
+    ).sort("created_at", -1).to_list(500)
+    return {"listings": [await listing_public(d) for d in docs]}
+
+
+@api.get("/listings")
+async def feed(user: dict = Depends(require_verified),
+               q: Optional[str] = Query(None), category: Optional[str] = Query(None),
+               featured: Optional[bool] = Query(None)):
+    query = {"status": "live"}
+    if category and category != "all":
+        query["category"] = category
+    if featured:
+        query["featured"] = True
+    if q:
+        query["$or"] = [
+            {"title": {"$regex": re.escape(q), "$options": "i"}},
+            {"description": {"$regex": re.escape(q), "$options": "i"}},
+        ]
+    docs = await db.listings.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return {"listings": [await listing_public(d) for d in docs]}
+
+
+@api.get("/listings/{listing_id}")
+async def get_listing(listing_id: str, user: dict = Depends(require_verified)):
+    listing = await db.listings.find_one({"id": listing_id}, {"_id": 0})
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    is_owner = listing["seller_id"] == user["id"]
+    if listing["status"] not in ("live", "sold") and not is_owner:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    out = await listing_public(listing)
+    out["is_owner"] = is_owner
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Offers
+# ---------------------------------------------------------------------------
+async def _offer_public(o: dict, include_buyer=False):
+    out = {
+        "id": o["id"], "listing_id": o["listing_id"], "buyer_id": o["buyer_id"],
+        "amount": o["amount"], "status": o["status"], "is_buy_now": o.get("is_buy_now", False),
+        "created_at": o.get("created_at"),
+    }
+    if include_buyer:
+        out["buyer"] = await seller_public(o["buyer_id"])
+    return out
+
+
+async def _create_offer(listing_id, user, amount, is_buy_now):
+    listing = await db.listings.find_one({"id": listing_id})
+    if not listing or listing["status"] != "live":
+        raise HTTPException(status_code=404, detail="Listing not available")
+    if listing["seller_id"] == user["id"]:
+        raise HTTPException(status_code=400, detail="You cannot make an offer on your own listing")
+    doc = {
+        "id": str(uuid.uuid4()), "listing_id": listing_id, "buyer_id": user["id"],
+        "amount": float(amount), "status": "pending", "is_buy_now": is_buy_now,
+        "created_at": now_iso(), "updated_at": now_iso(),
+    }
+    await db.offers.insert_one(doc)
+    return await _offer_public(doc)
+
+
+@api.post("/listings/{listing_id}/offers")
+async def make_offer(listing_id: str, body: OfferBody, user: dict = Depends(require_verified)):
+    return await _create_offer(listing_id, user, body.amount, False)
+
+
+@api.post("/listings/{listing_id}/buy-now")
+async def buy_now(listing_id: str, user: dict = Depends(require_verified)):
+    listing = await db.listings.find_one({"id": listing_id})
+    if not listing or listing["status"] != "live":
+        raise HTTPException(status_code=404, detail="Listing not available")
+    return await _create_offer(listing_id, user, listing["price"], True)
+
+
+@api.get("/listings/{listing_id}/offers")
+async def listing_offers(listing_id: str, user: dict = Depends(require_verified)):
+    listing = await db.listings.find_one({"id": listing_id})
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    is_owner = listing["seller_id"] == user["id"]
+    if is_owner:
+        offers = await db.offers.find({"listing_id": listing_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
+        return {"offers": [await _offer_public(o, include_buyer=True) for o in offers], "is_owner": True}
+    offers = await db.offers.find({"listing_id": listing_id, "buyer_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return {"offers": [await _offer_public(o) for o in offers], "is_owner": False}
+
+
+@api.post("/offers/{offer_id}/{action}")
+async def act_on_offer(offer_id: str, action: str, user: dict = Depends(require_verified)):
+    offer = await db.offers.find_one({"id": offer_id})
+    if not offer:
+        raise HTTPException(status_code=404, detail="Offer not found")
+    listing = await db.listings.find_one({"id": offer["listing_id"]})
+    if action in ("accept", "decline"):
+        if not listing or listing["seller_id"] != user["id"]:
+            raise HTTPException(status_code=403, detail="Only the seller can do that")
+        if offer["status"] != "pending":
+            raise HTTPException(status_code=400, detail="Offer is no longer pending")
+        new_status = "accepted" if action == "accept" else "declined"
+    elif action == "withdraw":
+        if offer["buyer_id"] != user["id"]:
+            raise HTTPException(status_code=403, detail="Only the buyer can withdraw")
+        if offer["status"] != "pending":
+            raise HTTPException(status_code=400, detail="Offer is no longer pending")
+        new_status = "withdrawn"
+    else:
+        raise HTTPException(status_code=400, detail="Invalid action")
+    await db.offers.update_one({"id": offer_id}, {"$set": {"status": new_status, "updated_at": now_iso()}})
+    return {"status": "ok", "offer_status": new_status}
+
+
 @api.get("/")
 async def root():
     return {"service": "First Unit API", "status": "ok"}
@@ -1033,7 +1428,17 @@ async def startup():
     await db.login_attempts.create_index("identifier")
     await db.verification_events.create_index("verification_id")
     await db.profiles.create_index("user_id")
+    await db.listings.create_index("seller_id")
+    await db.listings.create_index("status")
+    await db.offers.create_index("listing_id")
+    await db.files.create_index("storage_path")
     await seed_admins()
+    await seed_categories()
+    try:
+        await asyncio.to_thread(init_storage)
+        logger.info("Object storage initialized")
+    except Exception as e:
+        logger.error(f"Storage init failed (uploads may not work yet): {e}")
     logger.info("First Unit API started")
 
 

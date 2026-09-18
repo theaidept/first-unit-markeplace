@@ -2,6 +2,9 @@ import axios from "axios";
 
 const BASE = process.env.REACT_APP_BACKEND_URL;
 
+export const BACKEND = BASE;
+export const fileUrl = (p) => (p ? `${BASE}${p}` : null);
+
 const api = axios.create({
   baseURL: `${BASE}/api`,
   withCredentials: true,

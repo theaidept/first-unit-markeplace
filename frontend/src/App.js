@@ -11,6 +11,8 @@ import ResetPassword from "./pages/ResetPassword";
 import VerificationPending from "./pages/VerificationPending";
 import VerificationCallback from "./pages/VerificationCallback";
 import Marketplace from "./pages/Marketplace";
+import Sell from "./pages/Sell";
+import ListingDetail from "./pages/ListingDetail";
 import Members from "./pages/Members";
 import MemberProfile from "./pages/MemberProfile";
 import MyProfile from "./pages/MyProfile";
@@ -48,6 +50,22 @@ function App() {
             element={
               <RequireApproved>
                 <Marketplace />
+              </RequireApproved>
+            }
+          />
+          <Route
+            path="/sell"
+            element={
+              <RequireApproved>
+                <Sell />
+              </RequireApproved>
+            }
+          />
+          <Route
+            path="/listing/:id"
+            element={
+              <RequireApproved>
+                <ListingDetail />
               </RequireApproved>
             }
           />

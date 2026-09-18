@@ -33,6 +33,7 @@ export const AppNav = () => {
         {user?.verification_status === "approved" && (
           <nav className="app-links" data-testid="app-links">
             <NavLink to="/marketplace" data-testid="nav-marketplace">Marketplace</NavLink>
+            <NavLink to="/sell" data-testid="nav-sell">Sell</NavLink>
             <NavLink to="/members" data-testid="nav-members">Members</NavLink>
             <NavLink to="/profile" data-testid="nav-profile">Profile</NavLink>
           </nav>

@@ -20,6 +20,54 @@ export default function AdminPanel() {
   const [reasons, setReasons] = useState({});
   const [loading, setLoading] = useState(true);
   const [fee, setFee] = useState({ amount: 0, active: false });
+  const [boosts, setBoosts] = useState([]);
+  const [boostFeature, setBoostFeature] = useState(true);
+  const [draft, setDraft] = useState({ name: "", price: "", until_sold: false, duration_days: 3 });
+
+  const loadBoosts = async () => {
+    try {
+      const { data } = await api.get("/admin/boost-types");
+      setBoosts(data.boost_types);
+      setBoostFeature(data.feature_enabled);
+    } catch { /* ignore */ }
+  };
+  const toggleFeature = async (enabled) => {
+    try {
+      await api.put("/admin/boost-feature", { enabled });
+      setBoostFeature(enabled);
+      toast.success(enabled ? "Boost feature shown to sellers" : "Boost feature hidden entirely");
+    } catch (err) { toast.error(formatApiErrorDetail(err.response?.data?.detail)); }
+  };
+  const boostPayload = (b) => ({
+    name: b.name, price: Number(b.price), until_sold: !!b.until_sold,
+    duration_days: b.until_sold ? null : Number(b.duration_days) || null,
+    hidden: !!b.hidden, active: b.active !== false,
+  });
+  const createBoost = async () => {
+    if (!draft.name.trim()) { toast.error("Name the boost tier"); return; }
+    try {
+      await api.post("/admin/boost-types", boostPayload({ ...draft, hidden: false, active: true }));
+      setDraft({ name: "", price: "", until_sold: false, duration_days: 3 });
+      toast.success("Boost tier created");
+      loadBoosts();
+    } catch (err) { toast.error(formatApiErrorDetail(err.response?.data?.detail)); }
+  };
+  const saveBoost = async (b) => {
+    try {
+      await api.put(`/admin/boost-types/${b.id}`, boostPayload(b));
+      toast.success("Boost tier saved");
+      loadBoosts();
+    } catch (err) { toast.error(formatApiErrorDetail(err.response?.data?.detail)); }
+  };
+  const patchBoost = (id, patch) => setBoosts((prev) => prev.map((b) => (b.id === id ? { ...b, ...patch } : b)));
+  const quickToggle = async (b, patch) => { patchBoost(b.id, patch); await saveBoost({ ...b, ...patch }); };
+  const deleteBoost = async (id) => {
+    try {
+      await api.delete(`/admin/boost-types/${id}`);
+      toast.success("Boost tier removed");
+      loadBoosts();
+    } catch (err) { toast.error(formatApiErrorDetail(err.response?.data?.detail)); }
+  };
 
   const loadFee = async () => {
     try { const { data } = await api.get("/admin/listing-fee"); setFee(data); } catch { /* ignore */ }
@@ -51,6 +99,7 @@ export default function AdminPanel() {
   useEffect(() => {
     load();
     loadFee();
+    loadBoosts();
   }, []);
 
   const decide = async (userId, decision) => {
@@ -97,6 +146,76 @@ export default function AdminPanel() {
           </div>
           <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 10 }}>
             Not wired to Stripe and never charged now. This control lets a listing fee be introduced later.
+          </div>
+        </div>
+
+        <div className="card" style={{ padding: 20, margin: "0 0 6px" }} data-testid="boost-admin-panel">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+            <div className="sc-head" style={{ margin: 0 }}>Boost management · Lane B (Stripe — platform services)</div>
+            <label className="undercover-toggle" style={{ margin: 0, background: "#fff" }} data-testid="boost-feature-toggle">
+              <input type="checkbox" checked={!!boostFeature} onChange={(e) => toggleFeature(e.target.checked)} data-testid="boost-feature-checkbox" />
+              <div><b>Show boost feature</b><span>Off = sellers can only publish free.</span></div>
+            </label>
+          </div>
+
+          <div style={{ display: "grid", gap: 10, marginTop: 14 }} data-testid="boost-type-list">
+            {boosts.length === 0 && <div style={{ fontSize: 13, color: "var(--text-faint)" }}>No boost tiers yet. Create one below.</div>}
+            {boosts.map((b) => (
+              <div key={b.id} className="boost-admin-row" data-testid={`boost-row-${b.id}`}
+                style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap", padding: 12, border: "1px solid var(--hairline)", borderRadius: 2, background: b.active === false ? "#f6f7f9" : "#fff" }}>
+                <div className="field" style={{ margin: 0, flex: "1 1 160px" }}>
+                  <label>Name</label>
+                  <input value={b.name} onChange={(e) => patchBoost(b.id, { name: e.target.value })} data-testid={`boost-name-${b.id}`} />
+                </div>
+                <div className="field" style={{ margin: 0, width: 110 }}>
+                  <label>Price (USD)</label>
+                  <input type="number" min="0" step="0.01" value={b.price} onChange={(e) => patchBoost(b.id, { price: e.target.value })} data-testid={`boost-price-${b.id}`} />
+                </div>
+                <div className="field" style={{ margin: 0, width: 130 }}>
+                  <label>Duration</label>
+                  {b.until_sold ? (
+                    <input value="Until sold" disabled data-testid={`boost-duration-${b.id}`} />
+                  ) : (
+                    <input type="number" min="1" value={b.duration_days || ""} onChange={(e) => patchBoost(b.id, { duration_days: e.target.value })} placeholder="days" data-testid={`boost-duration-${b.id}`} />
+                  )}
+                </div>
+                <label className="undercover-toggle" style={{ margin: 0, background: "transparent", border: "none", padding: "0 4px" }}>
+                  <input type="checkbox" checked={!!b.until_sold} onChange={(e) => patchBoost(b.id, { until_sold: e.target.checked })} data-testid={`boost-untilsold-${b.id}`} />
+                  <div><b>Until sold</b></div>
+                </label>
+                <button className="btn btn-steel" onClick={() => saveBoost(b)} data-testid={`boost-save-${b.id}`}>Save</button>
+                <button className="btn btn-ghost" onClick={() => quickToggle(b, { hidden: !b.hidden })} data-testid={`boost-hide-${b.id}`}>
+                  {b.hidden ? "Show" : "Hide"}
+                </button>
+                <button className="btn btn-ghost" onClick={() => quickToggle(b, { active: b.active === false })} data-testid={`boost-deactivate-${b.id}`}>
+                  {b.active === false ? "Reactivate" : "Deactivate"}
+                </button>
+                <button className="btn btn-ghost" onClick={() => deleteBoost(b.id)} data-testid={`boost-delete-${b.id}`} style={{ color: "var(--red)" }}>Delete</button>
+                <div style={{ fontSize: 11, color: "var(--text-faint)", width: "100%" }}>
+                  {b.hidden ? "Hidden from sellers · " : "Visible to sellers · "}{b.active === false ? "inactive" : "active"}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap", marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--hairline)" }} data-testid="boost-create-form">
+            <div className="field" style={{ margin: 0, flex: "1 1 160px" }}>
+              <label>New tier name</label>
+              <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="e.g. 14-Day Boost" data-testid="new-boost-name" />
+            </div>
+            <div className="field" style={{ margin: 0, width: 110 }}>
+              <label>Price (USD)</label>
+              <input type="number" min="0" step="0.01" value={draft.price} onChange={(e) => setDraft({ ...draft, price: e.target.value })} placeholder="0.00" data-testid="new-boost-price" />
+            </div>
+            <div className="field" style={{ margin: 0, width: 130 }}>
+              <label>Duration (days)</label>
+              <input type="number" min="1" value={draft.until_sold ? "" : draft.duration_days} disabled={draft.until_sold} onChange={(e) => setDraft({ ...draft, duration_days: e.target.value })} data-testid="new-boost-duration" />
+            </div>
+            <label className="undercover-toggle" style={{ margin: 0, background: "transparent", border: "none", padding: "0 4px" }}>
+              <input type="checkbox" checked={draft.until_sold} onChange={(e) => setDraft({ ...draft, until_sold: e.target.checked })} data-testid="new-boost-untilsold" />
+              <div><b>Until sold</b></div>
+            </label>
+            <button className="btn btn-primary" onClick={createBoost} data-testid="new-boost-create-btn">Create tier</button>
           </div>
         </div>
 

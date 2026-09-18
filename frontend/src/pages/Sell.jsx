@@ -3,14 +3,12 @@ import { useNavigate } from "react-router-dom";
 import { AppNav } from "../components/AppNav";
 import api, { fileUrl, formatApiErrorDetail } from "../lib/api";
 import { toast } from "sonner";
-import { Upload, X, Check, ImageIcon, Video } from "lucide-react";
+import { Upload, X, Check, ImageIcon, Video, Rocket, Zap } from "lucide-react";
 
 const CONDITIONS = ["Excellent", "Good", "Fair"];
-const STEPS = [
-  { n: 1, t: "Details & Media" },
-  { n: 2, t: "Pricing", soon: true },
-  { n: 3, t: "Review & Publish" },
-];
+
+const money = (n) => `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const boostLabel = (b) => (b.until_sold ? "Until sold" : `${b.duration_days}-day`);
 
 export default function Sell() {
   const navigate = useNavigate();
@@ -19,23 +17,25 @@ export default function Sell() {
   const [uploading, setUploading] = useState(false);
   const [uploadingVideo, setUploadingVideo] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [boostCfg, setBoostCfg] = useState({ feature_enabled: false, boost_types: [], listing_fee: { amount: 0, active: false } });
+  const [selectedBoost, setSelectedBoost] = useState(null); // boost id or null (free)
   const [form, setForm] = useState({
-    title: "",
-    category: "",
-    condition: "Good",
-    location: "",
-    price: "",
-    description: "",
-    meetup_note: "",
-    photos: [],
-    video: "",
+    title: "", category: "", condition: "Good", location: "", price: "",
+    description: "", meetup_note: "", photos: [], video: "",
   });
+
+  const STEPS = [
+    { n: 1, t: "Details & Media" },
+    { n: 2, t: "Pricing" },
+    { n: 3, t: "Review & Publish" },
+  ];
 
   useEffect(() => {
     api.get("/categories").then((r) => {
       setCats(r.data.categories);
       if (r.data.categories[0]) setForm((f) => ({ ...f, category: r.data.categories[0].slug }));
     });
+    api.get("/boost/options").then((r) => setBoostCfg(r.data)).catch(() => {});
   }, []);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
@@ -82,27 +82,63 @@ export default function Sell() {
 
   const validStep1 = form.title.trim() && form.category && form.price !== "" && form.photos.length > 0;
 
-  const submit = async (publish) => {
-    if (publish && form.photos.length === 0) {
+  const feeAmount = boostCfg.listing_fee?.active ? Number(boostCfg.listing_fee.amount || 0) : 0;
+  const chosen = boostCfg.boost_types.find((b) => b.id === selectedBoost) || null;
+  const boostAmount = chosen ? Number(chosen.price || 0) : 0;
+  const totalToPublish = feeAmount + boostAmount;
+
+  // Create the listing (live) first, then charge for the boost against the real listing.
+  const publish = async () => {
+    if (form.photos.length === 0) {
       toast.error("Add at least one photo to publish");
       return;
     }
     setBusy(true);
     try {
-      const payload = { ...form, price: Number(form.price), publish };
+      const payload = { ...form, price: Number(form.price), publish: true };
       const { data } = await api.post("/listings", payload);
       if (data.status === "flagged") {
         toast.warning("Listing sent to Trust & Safety review (prohibited term detected).");
         navigate("/marketplace");
-      } else if (publish) {
-        toast.success("Listing published");
-        navigate(`/listing/${data.id}`);
-      } else {
-        toast.success("Saved as draft");
-        navigate("/marketplace");
+        return;
       }
+      if (chosen) {
+        try {
+          const { data: co } = await api.post(`/listings/${data.id}/boost/checkout`, {
+            boost_type_id: chosen.id,
+            origin_url: window.location.origin,
+          });
+          if (co.free) {
+            toast.success("Listing published and featured");
+            navigate(`/listing/${data.id}`);
+          } else {
+            window.location.href = co.checkout_url; // Stripe hosted checkout
+          }
+          return;
+        } catch (err) {
+          toast.error(formatApiErrorDetail(err.response?.data?.detail) || "Boost checkout failed — listing is published without a boost.");
+          navigate(`/listing/${data.id}`);
+          return;
+        }
+      }
+      toast.success("Listing published");
+      navigate(`/listing/${data.id}`);
     } catch (err) {
       toast.error(formatApiErrorDetail(err.response?.data?.detail) || "Could not save listing");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveDraft = async () => {
+    setBusy(true);
+    try {
+      const payload = { ...form, price: Number(form.price || 0), publish: false };
+      await api.post("/listings", payload);
+      toast.success("Saved as draft");
+      navigate("/marketplace");
+    } catch (err) {
+      toast.error(formatApiErrorDetail(err.response?.data?.detail) || "Could not save draft");
     } finally {
       setBusy(false);
     }
@@ -119,12 +155,9 @@ export default function Sell() {
 
         <div className="wizard-steps" data-testid="wizard-steps">
           {STEPS.map((s) => (
-            <div
-              key={s.n}
-              className={`wstep ${step === s.n ? "active" : ""} ${s.soon ? "soon" : ""} ${step > s.n && !s.soon ? "done" : ""}`}
-            >
-              <span className="wn">{step > s.n && !s.soon ? <Check size={14} /> : s.n}</span>
-              <span>{s.t}{s.soon && <em> · soon</em>}</span>
+            <div key={s.n} className={`wstep ${step === s.n ? "active" : ""} ${step > s.n ? "done" : ""}`}>
+              <span className="wn">{step > s.n ? <Check size={14} /> : s.n}</span>
+              <span>{s.t}</span>
             </div>
           ))}
         </div>
@@ -139,9 +172,7 @@ export default function Sell() {
               <div className="field">
                 <label>Category</label>
                 <select value={form.category} onChange={set("category")} data-testid="sell-category">
-                  {cats.map((c) => (
-                    <option key={c.slug} value={c.slug}>{c.name}</option>
-                  ))}
+                  {cats.map((c) => (<option key={c.slug} value={c.slug}>{c.name}</option>))}
                 </select>
               </div>
               <div className="field">
@@ -210,12 +241,74 @@ export default function Sell() {
             </div>
 
             <div style={{ display: "flex", gap: 10, justifyContent: "space-between", marginTop: 10 }}>
-              <button className="btn btn-ghost" onClick={() => submit(false)} disabled={busy || !form.title.trim()} data-testid="save-draft-btn">
+              <button className="btn btn-ghost" onClick={saveDraft} disabled={busy || !form.title.trim()} data-testid="save-draft-btn">
                 Save as draft
               </button>
-              <button className="btn btn-primary" onClick={() => setStep(3)} disabled={!validStep1} data-testid="to-review-btn" title={!validStep1 ? "Add a title, category, price and at least one photo" : undefined}>
-                Continue to review →
+              <button className="btn btn-primary" onClick={() => setStep(2)} disabled={!validStep1} data-testid="to-pricing-btn" title={!validStep1 ? "Add a title, category, price and at least one photo" : undefined}>
+                Continue to pricing →
               </button>
+            </div>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="card" style={{ padding: 24 }} data-testid="sell-step-2">
+            <div className="sc-head" style={{ marginBottom: 4 }}>Feature your listing</div>
+            {boostCfg.feature_enabled && boostCfg.boost_types.length > 0 ? (
+              <>
+                <p style={{ fontSize: 13, color: "var(--text-dim)", marginBottom: 16 }}>
+                  A boost gives your listing a <b>FEATURED</b> tag in the feed and priority placement in the Featured Stories reel. Publishing without featuring is always free.
+                </p>
+                <div className="boost-tiers" data-testid="boost-tiers">
+                  <button
+                    type="button"
+                    className={`boost-tier ${selectedBoost === null ? "sel" : ""}`}
+                    onClick={() => setSelectedBoost(null)}
+                    data-testid="boost-tier-none"
+                  >
+                    <div className="bt-top">
+                      <span className="bt-name">Publish without featuring</span>
+                      <span className="bt-price">Free</span>
+                    </div>
+                    <span className="bt-sub">Standard placement in the feed.</span>
+                  </button>
+                  {boostCfg.boost_types.map((b) => (
+                    <button
+                      type="button"
+                      key={b.id}
+                      className={`boost-tier ${selectedBoost === b.id ? "sel" : ""}`}
+                      onClick={() => setSelectedBoost(b.id)}
+                      data-testid={`boost-tier-${b.id}`}
+                    >
+                      <div className="bt-top">
+                        <span className="bt-name"><Zap size={13} style={{ marginRight: 5 }} />{b.name}</span>
+                        <span className="bt-price">{money(b.price)}</span>
+                      </div>
+                      <span className="bt-sub">Featured for <b>{boostLabel(b)}</b></span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p style={{ fontSize: 13, color: "var(--text-dim)", marginBottom: 8 }} data-testid="boosts-unavailable">
+                Featuring is currently unavailable — your listing will publish free with standard placement.
+              </p>
+            )}
+
+            <div className="listing-summary" data-testid="listing-summary" style={{ marginTop: 20 }}>
+              <div className="sc-head" style={{ marginBottom: 10 }}>Listing summary</div>
+              <div className="ls-row"><span>Asking price</span><span data-testid="summary-asking">{money(form.price)}</span></div>
+              <div className="ls-row"><span>Marketplace fee</span><span data-testid="summary-fee">{money(feeAmount)}</span></div>
+              <div className="ls-row"><span>Boost{chosen ? ` · ${chosen.name}` : ""}</span><span data-testid="summary-boost">{money(boostAmount)}</span></div>
+              <div className="ls-row ls-total"><span>Total to publish</span><span data-testid="summary-total">{money(totalToPublish)}</span></div>
+              <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 8 }}>
+                The asking price is paid off-platform between members. Only platform charges are billed here.
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 10, justifyContent: "space-between", marginTop: 20 }}>
+              <button className="btn btn-ghost" onClick={() => setStep(1)} data-testid="back-to-details-btn">← Back to details</button>
+              <button className="btn btn-primary" onClick={() => setStep(3)} data-testid="to-review-btn">Continue to review →</button>
             </div>
           </div>
         )}
@@ -235,15 +328,22 @@ export default function Sell() {
                 </div>
                 <p style={{ marginTop: 12, color: "var(--text-dim)", fontSize: 14, lineHeight: 1.6 }}>{form.description || "No description."}</p>
                 {form.meetup_note && <div className="pe-note" style={{ marginTop: 12 }}>Meet-up: {form.meetup_note}</div>}
-                <div style={{ fontSize: 12, color: "var(--text-faint)", marginTop: 12 }}>{form.photos.length} photo(s) attached</div>
+                <div style={{ fontSize: 12, color: "var(--text-faint)", marginTop: 12 }}>{form.photos.length} photo(s) attached{form.video ? " · video attached" : ""}</div>
               </div>
             </div>
+
+            <div className="listing-summary" data-testid="review-summary" style={{ marginTop: 20 }}>
+              <div className="ls-row"><span>Marketplace fee</span><span>{money(feeAmount)}</span></div>
+              <div className="ls-row"><span>Boost{chosen ? ` · ${chosen.name} (${boostLabel(chosen)})` : " · none"}</span><span>{money(boostAmount)}</span></div>
+              <div className="ls-row ls-total"><span>Total to publish</span><span data-testid="review-total">{money(totalToPublish)}</span></div>
+            </div>
+
             <div style={{ display: "flex", gap: 10, justifyContent: "space-between", marginTop: 20 }}>
-              <button className="btn btn-ghost" onClick={() => setStep(1)} data-testid="back-to-details-btn">← Back to details</button>
+              <button className="btn btn-ghost" onClick={() => setStep(2)} data-testid="back-to-pricing-btn">← Back to pricing</button>
               <div style={{ display: "flex", gap: 10 }}>
-                <button className="btn btn-ghost" onClick={() => submit(false)} disabled={busy} data-testid="review-save-draft-btn">Save as draft</button>
-                <button className="btn btn-primary" onClick={() => submit(true)} disabled={busy} data-testid="publish-btn">
-                  {busy ? "Publishing…" : "Publish listing"}
+                <button className="btn btn-ghost" onClick={saveDraft} disabled={busy} data-testid="review-save-draft-btn">Save as draft</button>
+                <button className="btn btn-primary" onClick={publish} disabled={busy} data-testid="publish-btn">
+                  {busy ? "Working…" : chosen ? (<><Rocket size={15} style={{ marginRight: 6 }} />Pay {money(totalToPublish)} & publish</>) : "Publish listing"}
                 </button>
               </div>
             </div>

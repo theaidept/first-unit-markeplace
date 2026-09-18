@@ -22,6 +22,7 @@ import bcrypt
 import httpx
 import asyncio
 import requests
+import stripe
 from providers import get_provider, pkce_pair
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, UploadFile, File, Query, Header
 from starlette.middleware.cors import CORSMiddleware
@@ -1093,6 +1094,19 @@ async def seller_public(seller_id: str) -> dict:
     return public_profile(profile, user)
 
 
+def _featured_active(listing: dict) -> bool:
+    """A listing is FEATURED only while a paid boost is live (constraint 6 / Lane B)."""
+    if not listing.get("featured"):
+        return False
+    fu = listing.get("featured_until")
+    if fu is None:  # 'Until sold' boost — stays featured until the listing sells
+        return True
+    try:
+        return datetime.fromisoformat(fu) > datetime.now(timezone.utc)
+    except Exception:
+        return False
+
+
 async def listing_public(listing: dict, with_seller: bool = True) -> dict:
     out = {
         "id": listing["id"],
@@ -1108,7 +1122,7 @@ async def listing_public(listing: dict, with_seller: bool = True) -> dict:
         "status": listing.get("status"),
         "meetup_note": listing.get("meetup_note"),
         "has_video": bool(listing.get("video")),
-        "featured": listing.get("featured", False),
+        "featured": _featured_active(listing),
         "created_at": listing.get("created_at"),
     }
     if with_seller:
@@ -1267,8 +1281,6 @@ async def feed(user: dict = Depends(require_verified),
     query = {"status": "live"}
     if category and category != "all":
         query["category"] = category
-    if featured:
-        query["featured"] = True
     if has_video:
         query["video"] = {"$ne": None}
     if q:
@@ -1277,6 +1289,10 @@ async def feed(user: dict = Depends(require_verified),
             {"description": {"$regex": re.escape(q), "$options": "i"}},
         ]
     docs = await db.listings.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+    if featured:
+        docs = [d for d in docs if _featured_active(d)]
+    # Featured (paid-boost) listings surface first, then newest.
+    docs.sort(key=lambda d: (0 if _featured_active(d) else 1, ))
     return {"listings": [await listing_public(d) for d in docs]}
 
 
@@ -1617,18 +1633,258 @@ async def sync_story(listing: dict):
 @api.get("/stories")
 async def get_stories(user: dict = Depends(require_verified)):
     stories = await db.stories.find({"active": True}, {"_id": 0}).sort("order", 1).to_list(200)
-    out = []
+    resolved = []
     for s in stories:
         listing = await db.listings.find_one({"id": s["listing_id"]}, {"_id": 0})
         if not listing or listing.get("status") != "live" or not listing.get("video"):
             continue
+        resolved.append((s, listing))
+    # Boosted listings get priority placement in the Featured Stories reel.
+    resolved.sort(key=lambda pair: (0 if _featured_active(pair[1]) else 1, pair[0].get("order", 0)))
+    out = []
+    for s, listing in resolved:
         out.append({
             "id": s["id"], "listing_id": s["listing_id"], "video": s["video"],
             "title": listing["title"], "price": listing["price"],
             "photo": (listing.get("photos") or [None])[0],
+            "featured": _featured_active(listing),
             "seller": await seller_public(s["seller_id"]),
         })
     return {"stories": out}
+
+
+# ---------------------------------------------------------------------------
+# LANE B — platform services via Stripe (First Unit is the MERCHANT).
+# Boosts now; the listing fee bills through the SAME layer later. Stripe is
+# NEVER used for item-sale money between members (constraint 6 = Lane A only).
+# ---------------------------------------------------------------------------
+stripe.api_key = os.environ.get("STRIPE_SECRET_KEY") or "sk_test_emergent"
+
+
+class BoostTypeBody(BaseModel):
+    name: str = Field(min_length=1)
+    price: float = Field(ge=0)
+    until_sold: bool = False
+    duration_days: Optional[int] = Field(default=None, ge=1)
+    hidden: bool = False
+    active: bool = True
+
+
+class BoostFeatureBody(BaseModel):
+    enabled: bool
+
+
+class BoostCheckoutBody(BaseModel):
+    boost_type_id: str
+    origin_url: str
+
+
+def boost_type_public(b: dict) -> dict:
+    return {
+        "id": b["id"], "name": b["name"], "price": b.get("price", 0.0),
+        "until_sold": b.get("until_sold", False), "duration_days": b.get("duration_days"),
+        "hidden": b.get("hidden", False), "active": b.get("active", True),
+        "order": b.get("order", 0),
+    }
+
+
+async def get_boost_feature_enabled() -> bool:
+    cfg = await db.config.find_one({"key": "boost_feature"}, {"_id": 0})
+    return True if not cfg else bool(cfg.get("enabled", True))
+
+
+async def get_listing_fee_cfg() -> dict:
+    cfg = await db.config.find_one({"key": "listing_fee"}, {"_id": 0})
+    if not cfg:
+        return {"amount": 0.0, "active": False}
+    return {"amount": cfg.get("amount", 0.0), "active": cfg.get("active", False)}
+
+
+# --------------------------- Admin boost management ---------------------------
+@api.get("/admin/boost-types")
+async def admin_list_boosts(admin: dict = Depends(require_admin)):
+    docs = await db.boost_types.find({}, {"_id": 0}).sort("order", 1).to_list(200)
+    return {"boost_types": [boost_type_public(b) for b in docs],
+            "feature_enabled": await get_boost_feature_enabled()}
+
+
+@api.post("/admin/boost-types")
+async def admin_create_boost(body: BoostTypeBody, admin: dict = Depends(require_admin)):
+    if not body.until_sold and not body.duration_days:
+        raise HTTPException(status_code=400, detail="Set a duration in days or mark it 'Until sold'")
+    order = await db.boost_types.count_documents({})
+    doc = {
+        "id": str(uuid.uuid4()), "name": body.name.strip(), "price": float(body.price),
+        "until_sold": body.until_sold, "duration_days": None if body.until_sold else body.duration_days,
+        "hidden": body.hidden, "active": body.active, "order": order,
+        "created_at": now_iso(), "updated_at": now_iso(),
+    }
+    await db.boost_types.insert_one(doc)
+    return boost_type_public(doc)
+
+
+@api.put("/admin/boost-types/{boost_id}")
+async def admin_update_boost(boost_id: str, body: BoostTypeBody, admin: dict = Depends(require_admin)):
+    b = await db.boost_types.find_one({"id": boost_id})
+    if not b:
+        raise HTTPException(status_code=404, detail="Boost type not found")
+    if not body.until_sold and not body.duration_days:
+        raise HTTPException(status_code=400, detail="Set a duration in days or mark it 'Until sold'")
+    updates = {
+        "name": body.name.strip(), "price": float(body.price), "until_sold": body.until_sold,
+        "duration_days": None if body.until_sold else body.duration_days,
+        "hidden": body.hidden, "active": body.active, "updated_at": now_iso(),
+    }
+    await db.boost_types.update_one({"id": boost_id}, {"$set": updates})
+    b.update(updates)
+    return boost_type_public(b)
+
+
+@api.delete("/admin/boost-types/{boost_id}")
+async def admin_delete_boost(boost_id: str, admin: dict = Depends(require_admin)):
+    res = await db.boost_types.delete_one({"id": boost_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Boost type not found")
+    return {"status": "ok"}
+
+
+@api.put("/admin/boost-feature")
+async def admin_boost_feature(body: BoostFeatureBody, admin: dict = Depends(require_admin)):
+    await db.config.update_one({"key": "boost_feature"},
+                               {"$set": {"enabled": bool(body.enabled), "updated_at": now_iso()}},
+                               upsert=True)
+    return {"enabled": bool(body.enabled)}
+
+
+# --------------------------- Member boost options + checkout ---------------------------
+@api.get("/boost/options")
+async def boost_options(user: dict = Depends(require_verified)):
+    feature = await get_boost_feature_enabled()
+    tiers = []
+    if feature:
+        docs = await db.boost_types.find({"active": True, "hidden": False}, {"_id": 0}).sort("order", 1).to_list(200)
+        tiers = [boost_type_public(b) for b in docs]
+    return {"feature_enabled": feature, "boost_types": tiers, "listing_fee": await get_listing_fee_cfg()}
+
+
+async def _apply_boost(listing_id: str, bt: dict, stripe_ref: str):
+    starts = datetime.now(timezone.utc)
+    ends = None if bt.get("until_sold") else starts + timedelta(days=int(bt.get("duration_days") or 0))
+    ends_iso = ends.isoformat() if ends else None
+    await db.boost_purchases.insert_one({
+        "id": str(uuid.uuid4()), "listing_id": listing_id, "boost_type_id": bt["id"],
+        "boost_name": bt["name"], "until_sold": bt.get("until_sold", False),
+        "duration_days": bt.get("duration_days"), "price": bt.get("price"),
+        "stripe_ref": stripe_ref, "starts_at": starts.isoformat(), "ends_at": ends_iso,
+        "created_at": now_iso(),
+    })
+    await db.listings.update_one({"id": listing_id}, {"$set": {
+        "featured": True, "featured_until": ends_iso, "boosted_at": starts.isoformat(),
+        "updated_at": now_iso()}})
+
+
+async def _create_platform_checkout(*, kind, amount, description, metadata, origin_url):
+    session = await asyncio.to_thread(
+        lambda: stripe.checkout.Session.create(
+            mode="payment",
+            line_items=[{"price_data": {"currency": "usd", "unit_amount": int(round(float(amount) * 100)),
+                                         "product_data": {"name": description}}, "quantity": 1}],
+            success_url=f"{origin_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{origin_url}/payment/cancel",
+            metadata={**metadata, "kind": kind},
+        )
+    )
+    await db.payment_transactions.insert_one({
+        "id": str(uuid.uuid4()), "session_id": session.id, "kind": kind, "amount": float(amount),
+        "currency": "usd", "description": description, "metadata": metadata,
+        "status": "initiated", "payment_status": "pending", "fulfilled": False,
+        "created_at": now_iso(), "updated_at": now_iso(),
+    })
+    return session
+
+
+async def _fulfill_payment(rec: dict):
+    if rec.get("fulfilled") or rec.get("payment_status") != "paid":
+        return
+    meta = rec.get("metadata", {})
+    if rec.get("kind") == "boost":
+        bt = await db.boost_types.find_one({"id": meta.get("boost_type_id")})
+        if bt and meta.get("listing_id"):
+            await _apply_boost(meta["listing_id"], bt, stripe_ref=rec["session_id"])
+    # kind == "listing_fee": future — same layer marks the publish paid here, no rebuild needed.
+    await db.payment_transactions.update_one({"session_id": rec["session_id"]},
+                                             {"$set": {"fulfilled": True, "updated_at": now_iso()}})
+
+
+@api.post("/listings/{listing_id}/boost/checkout")
+async def boost_checkout(listing_id: str, body: BoostCheckoutBody, user: dict = Depends(require_verified)):
+    if not await get_boost_feature_enabled():
+        raise HTTPException(status_code=400, detail="Boosts are currently unavailable")
+    listing = await db.listings.find_one({"id": listing_id})
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    if listing["seller_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Not your listing")
+    bt = await db.boost_types.find_one({"id": body.boost_type_id})
+    if not bt or not bt.get("active") or bt.get("hidden"):
+        raise HTTPException(status_code=404, detail="Boost tier not available")
+    fee = await get_listing_fee_cfg()
+    fee_amount = float(fee["amount"]) if fee.get("active") else 0.0
+    total = float(bt["price"]) + fee_amount
+    if total <= 0:
+        await _apply_boost(listing_id, bt, stripe_ref="free")
+        return {"free": True, "listing_id": listing_id}
+    metadata = {"listing_id": listing_id, "boost_type_id": bt["id"], "user_id": user["id"],
+                "fee_amount": f"{fee_amount:.2f}"}
+    session = await _create_platform_checkout(
+        kind="boost", amount=total,
+        description=f"{bt['name']} — First Unit listing boost", metadata=metadata,
+        origin_url=body.origin_url.rstrip("/"))
+    return {"checkout_url": session.url, "session_id": session.id}
+
+
+@api.get("/payments/status/{session_id}")
+async def payment_status_check(session_id: str):
+    rec = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if rec.get("payment_status") != "paid":
+        try:
+            s = await asyncio.to_thread(stripe.checkout.Session.retrieve, session_id)
+            if s.payment_status == "paid" or s.status == "complete":
+                await db.payment_transactions.update_one(
+                    {"session_id": session_id, "payment_status": {"$ne": "paid"}},
+                    {"$set": {"status": "completed", "payment_status": "paid",
+                              "stripe_payment_intent_id": s.payment_intent, "updated_at": now_iso()}})
+                rec = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+                await _fulfill_payment(rec)
+                rec = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+        except Exception as e:
+            logger.error(f"stripe status check failed: {e}")
+    return {"session_id": rec["session_id"], "status": rec["status"],
+            "payment_status": rec["payment_status"], "kind": rec.get("kind"),
+            "metadata": rec.get("metadata", {})}
+
+
+@api.post("/stripe/webhook")
+async def stripe_webhook(request: Request):
+    payload = await request.body()
+    sig = request.headers.get("stripe-signature", "")
+    secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+    try:
+        event = stripe.Webhook.construct_event(payload, sig, secret)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid signature")
+    obj, t = event["data"]["object"], event["type"]
+    if t == "checkout.session.completed":
+        await db.payment_transactions.update_one(
+            {"session_id": obj["id"], "payment_status": {"$ne": "paid"}},
+            {"$set": {"status": "completed", "payment_status": obj.get("payment_status", "paid"),
+                      "stripe_payment_intent_id": obj.get("payment_intent"), "updated_at": now_iso()}})
+        rec = await db.payment_transactions.find_one({"session_id": obj["id"]}, {"_id": 0})
+        if rec:
+            await _fulfill_payment(rec)
+    return {"status": "ok"}
 
 
 @api.get("/")
@@ -1687,6 +1943,22 @@ async def seed_admins():
                                                 "role": "admin", "verification_status": "approved"}})
 
 
+async def seed_boosts():
+    if await db.boost_types.count_documents({}) == 0:
+        defaults = [
+            {"name": "3-Day Boost", "price": 9.0, "until_sold": False, "duration_days": 3},
+            {"name": "7-Day Boost", "price": 19.0, "until_sold": False, "duration_days": 7},
+            {"name": "Until Sold", "price": 29.0, "until_sold": True, "duration_days": None},
+        ]
+        for i, d in enumerate(defaults):
+            await db.boost_types.insert_one({
+                "id": str(uuid.uuid4()), **d, "hidden": False, "active": True, "order": i,
+                "created_at": now_iso(), "updated_at": now_iso(),
+            })
+    await db.config.update_one({"key": "boost_feature"},
+                               {"$setOnInsert": {"enabled": True, "created_at": now_iso()}}, upsert=True)
+
+
 @app.on_event("startup")
 async def startup():
     await db.users.create_index("email", unique=True)
@@ -1701,6 +1973,7 @@ async def startup():
     await db.files.create_index("storage_path")
     await seed_admins()
     await seed_categories()
+    await seed_boosts()
     try:
         await asyncio.to_thread(init_storage)
         logger.info("Object storage initialized")

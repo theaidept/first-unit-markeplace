@@ -18,6 +18,8 @@ import Members from "./pages/Members";
 import MemberProfile from "./pages/MemberProfile";
 import MyProfile from "./pages/MyProfile";
 import AdminPanel from "./pages/AdminPanel";
+import PaymentSuccess from "./pages/PaymentSuccess";
+import PaymentCancel from "./pages/PaymentCancel";
 
 function App() {
   return (
@@ -99,6 +101,22 @@ function App() {
             element={
               <RequireApproved>
                 <MyProfile />
+              </RequireApproved>
+            }
+          />
+          <Route
+            path="/payment/success"
+            element={
+              <RequireApproved>
+                <PaymentSuccess />
+              </RequireApproved>
+            }
+          />
+          <Route
+            path="/payment/cancel"
+            element={
+              <RequireApproved>
+                <PaymentCancel />
               </RequireApproved>
             }
           />

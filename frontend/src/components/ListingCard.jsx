@@ -22,6 +22,7 @@ export const ListingCard = ({ listing: l }) => {
         ) : (
           <div className="lc-noimg">No photo</div>
         )}
+        {l.featured && <span className="lc-featured" data-testid={`featured-tag-${l.id}`}>FEATURED</span>}
         <span className="lc-cat">{CATEGORY_LABELS[l.category] || l.category}</span>
       </div>
       <div className="lc-body">

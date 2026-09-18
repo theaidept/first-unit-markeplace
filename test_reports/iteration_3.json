@@ -1,0 +1,23 @@
+{
+  "summary": "Visual-only regression test of public landing page ('/'). Verified the primary bug fix: no USP cards render faded once scrolled into view. All 6 cards (including 'Undercover-Safe Privacy' and 'Department Job Board') reach opacity=1 with the 'in' class. Scroll-reveal works across all 19 .reveal elements. Category tiles have shadow, story hover scales the ring + adds shadow, spacing pull-tight→pull-up is tight (gap=0px, no overlap). CTAs navigate to /register. No page errors.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/test_reports/landing_desktop.png", "/app/test_reports/landing_mobile.png"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "IntersectionObserver reveal implementation is correct and disconnects after first reveal (stays visible) — resolves prior framer-motion whileInView stuck-opacity issue.",
+    "prefers-reduced-motion path acceptable (elements start visible)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A", "frontend": "100%"},
+  "test_credentials": "N/A - public landing page",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Landing page visual polish verified on desktop (1920x900) and mobile (430x900). Desktop: all 6 USP .reveal cards opacity=1, all 19 .reveal elements gain 'in' class after scroll. Cat tiles (4) have box-shadow rgba(11,31,66,0.55) 0px 10px 24px -18px. Story hover ring transform matrix(1.06,...) + shadow applied. pull-tight/pull-up gap=0px. Both CTAs (landing-join-btn, hero-join-btn) route to /register. Only console noise: 4x 401 from unauthenticated /api/me polls — expected on public route. Mobile check: cards not yet in viewport read 0 opacity (IntersectionObserver working as intended); when scrolled to, they render opaque (visible in screenshot).",
+  "rca of the issue": "Original bug: per-card framer-motion whileInView left some USP cards stuck at low opacity mid-scroll. Fix (already applied by main agent) replaces this with an IntersectionObserver-based <Reveal> that adds 'in' class once, then disconnects — guaranteeing cards remain fully visible after first reveal. Confirmed working."
+}

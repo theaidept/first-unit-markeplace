@@ -144,19 +144,42 @@ def self_user(user: dict) -> dict:
     }
 
 
-def public_profile(profile: dict) -> dict:
-    """The layer other members are allowed to see. Undercover members hide photo/name."""
+def _initials(handle: str) -> str:
+    parts = [p for p in re.split(r"\s+", (handle or "").strip()) if p]
+    if not parts:
+        return "FU"
+    if len(parts) == 1:
+        return parts[0][:2].upper()
+    return (parts[0][0] + parts[1][0]).upper()
+
+
+def public_profile(profile: dict, user: dict = None) -> dict:
+    """Member-facing PUBLIC layer only (constraint 3).
+
+    NEVER includes verified-identity fields (real name, credential number,
+    provider reference). Undercover members show no photo and no real name
+    while still carrying a confirmed Verified badge.
+    """
+    pv = profile.get("photo_visibility", "avatar")
+    if pv == "visible":  # legacy normalization
+        pv = "photo"
     undercover = profile.get("undercover", False)
-    photo_visible = profile.get("photo_visibility", "visible") == "visible" and not undercover
+    show_photo = pv == "photo" and bool(profile.get("avatar")) and not undercover
+    u = user or {}
     return {
-        "id": profile["id"],
+        "id": profile.get("id"),
+        "user_id": profile.get("user_id"),
         "display_handle": profile.get("display_handle"),
-        "avatar": profile.get("avatar") if photo_visible else None,
+        "photo_visibility": pv,
+        "avatar": profile.get("avatar") if show_photo else None,
+        "initials": _initials(profile.get("display_handle")),
         "agency": profile.get("agency"),
         "rank": profile.get("rank"),
         "years_of_service": profile.get("years_of_service"),
         "verified_badge": profile.get("verified_badge", False),
         "undercover": undercover,
+        "responder_type": u.get("responder_type"),
+        "service_status": u.get("service_status"),
     }
 
 
@@ -482,6 +505,16 @@ class DecisionBody(BaseModel):
     reason: Optional[str] = None
 
 
+class ProfileUpdateBody(BaseModel):
+    display_handle: Optional[str] = None
+    agency: Optional[str] = None
+    rank: Optional[str] = None
+    years_of_service: Optional[str] = None
+    photo_visibility: Optional[str] = None  # photo | avatar | initials
+    undercover: Optional[bool] = None
+    avatar: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # Brute force
 # ---------------------------------------------------------------------------
@@ -554,7 +587,7 @@ async def register(body: RegisterBody, response: Response):
         "rank": None,
         "years_of_service": None,
         "verified_badge": False,
-        "photo_visibility": "visible",
+        "photo_visibility": "avatar",
         "undercover": False,
         "created_at": now_iso(),
     }
@@ -698,7 +731,68 @@ async def marketplace_summary(user: dict = Depends(require_verified)):
 
 @api.get("/members")
 async def members(user: dict = Depends(require_verified)):
-    return {"members": []}
+    users = await db.users.find(
+        {"role": "member", "verification_status": "approved"},
+        {"_id": 0, "password_hash": 0},
+    ).sort("created_at", -1).to_list(1000)
+    out = []
+    for u in users:
+        profile = await db.profiles.find_one({"user_id": u["id"]}, {"_id": 0})
+        if profile:
+            out.append(public_profile(profile, u))
+    return {"members": out}
+
+
+@api.get("/profile/me")
+async def get_my_profile(user: dict = Depends(require_verified)):
+    profile = await db.profiles.find_one({"user_id": user["id"]}, {"_id": 0})
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    pub = public_profile(profile, user)
+    # Own view may manage the stored photo even while it's publicly hidden.
+    pub["avatar_raw"] = profile.get("avatar")
+    return pub
+
+
+@api.put("/profile/me")
+async def update_my_profile(body: ProfileUpdateBody, user: dict = Depends(require_verified)):
+    updates = {}
+    if body.display_handle is not None:
+        handle = body.display_handle.strip()
+        if not handle:
+            raise HTTPException(status_code=400, detail="Display handle cannot be empty")
+        updates["display_handle"] = handle
+    if body.agency is not None:
+        updates["agency"] = body.agency.strip() or None
+    if body.rank is not None:
+        updates["rank"] = body.rank.strip() or None
+    if body.years_of_service is not None:
+        updates["years_of_service"] = body.years_of_service.strip() or None
+    if body.photo_visibility is not None:
+        if body.photo_visibility not in ("photo", "avatar", "initials"):
+            raise HTTPException(status_code=400, detail="Invalid photo visibility")
+        updates["photo_visibility"] = body.photo_visibility
+    if body.undercover is not None:
+        updates["undercover"] = bool(body.undercover)
+    if body.avatar is not None:
+        updates["avatar"] = body.avatar.strip() or None
+    if updates:
+        await db.profiles.update_one({"user_id": user["id"]}, {"$set": updates})
+    profile = await db.profiles.find_one({"user_id": user["id"]}, {"_id": 0})
+    pub = public_profile(profile, user)
+    pub["avatar_raw"] = profile.get("avatar")
+    return pub
+
+
+@api.get("/profiles/{user_id}")
+async def get_profile(user_id: str, user: dict = Depends(require_verified)):
+    target = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    if not target or target.get("verification_status") != "approved":
+        raise HTTPException(status_code=404, detail="Member not found")
+    profile = await db.profiles.find_one({"user_id": user_id}, {"_id": 0})
+    if not profile:
+        raise HTTPException(status_code=404, detail="Member not found")
+    return public_profile(profile, target)
 
 
 # ---------------------------------------------------------------------------

@@ -11,6 +11,9 @@ import ResetPassword from "./pages/ResetPassword";
 import VerificationPending from "./pages/VerificationPending";
 import VerificationCallback from "./pages/VerificationCallback";
 import Marketplace from "./pages/Marketplace";
+import Members from "./pages/Members";
+import MemberProfile from "./pages/MemberProfile";
+import MyProfile from "./pages/MyProfile";
 import AdminPanel from "./pages/AdminPanel";
 
 function App() {
@@ -45,6 +48,30 @@ function App() {
             element={
               <RequireApproved>
                 <Marketplace />
+              </RequireApproved>
+            }
+          />
+          <Route
+            path="/members"
+            element={
+              <RequireApproved>
+                <Members />
+              </RequireApproved>
+            }
+          />
+          <Route
+            path="/members/:userId"
+            element={
+              <RequireApproved>
+                <MemberProfile />
+              </RequireApproved>
+            }
+          />
+          <Route
+            path="/profile"
+            element={
+              <RequireApproved>
+                <MyProfile />
               </RequireApproved>
             }
           />

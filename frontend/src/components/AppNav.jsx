@@ -1,4 +1,4 @@
-import { Link, useNavigate } from "react-router-dom";
+import { Link, NavLink, useNavigate } from "react-router-dom";
 import { Brand } from "./Brand";
 import { AvatarRing } from "./AvatarRing";
 import { useAuth } from "../context/AuthContext";
@@ -30,6 +30,13 @@ export const AppNav = () => {
     <div className="app-nav">
       <div className="wrap app-nav-inner">
         <Brand light />
+        {user?.verification_status === "approved" && (
+          <nav className="app-links" data-testid="app-links">
+            <NavLink to="/marketplace" data-testid="nav-marketplace">Marketplace</NavLink>
+            <NavLink to="/members" data-testid="nav-members">Members</NavLink>
+            <NavLink to="/profile" data-testid="nav-profile">Profile</NavLink>
+          </nav>
+        )}
         <div className="spacer" />
         {user?.role === "admin" && (
           <Link

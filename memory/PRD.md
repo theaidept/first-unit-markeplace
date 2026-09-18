@@ -32,6 +32,17 @@ First Unit is a mobile-first, **verified-only marketplace WEBSITE** (standard re
 - Seeded admins: theaidept@gmail.com (owner), admin@firstunit.us. Both approved.
 - Tested: 21/21 backend pass, frontend E2E 100%.
 
+## Implemented (2026-09-18) — Phase 2 Verification System
+- **Provider abstraction** (`providers.py`): `VerificationProvider` ABC; `IdmeProvider` (OAuth authorize + PKCE + callback→userinfo reduction) primary; `SheerIDProvider` stub; `get_provider()` selected via `VERIFICATION_PROVIDER` env. Runs in MOCK mode until real ID.me keys are set (swap needs no code changes outside providers.py).
+- **4-step flow**: pre-screening form (responder type/status/agency/credential#/rank/years; credential photo is NEVER uploaded to our server) → credential validation → human review → activation. Drives verification_status through the enum.
+- **Mock rules** (testable now): credential# `FAIL*`→rejected, `REVIEW*`→human_review, else→auto-approved. Real mode returns an ID.me authorize URL; `/verification/callback` (frontend) → `GET /api/verification/idme/callback` exchanges code + evaluates.
+- **Member approval log**: append-only VerificationEvent, shown in `/verification` (Date/Event/Reviewer/Status; reviewers System | ID.me Gateway | Trust & Safety Team | admin email).
+- **Admin review queue** (`/admin`): pending human-review cases show member-entered fields + provider outcome (no raw docs); approve/reject with reason writes events + fires alerts. Phase 1 manual override retained as fallback.
+- **Status alerts**: email via Resend (live) + SMS via Twilio (mock/log until creds provided) at each transition; failures never block transitions.
+- **Data boundary verified**: verification_records hold only id/user_id/current_state/provider/provider_reference/outcome/timestamps + member-entered prescreen. No raw documents, no token/userinfo payloads.
+- Tested: 15/15 Phase 2 backend + frontend 100%, zero issues.
+- **PENDING USER INPUT:** real ID.me sandbox client_id/secret and Twilio SID/token/from-number — paste to flip both integrations from MOCK to live (no code changes needed).
+
 ## Backlog (prioritized)
 - **P0 — Phase 2:** Real ID.me verification behind provider abstraction; SMS status alerts (Twilio) using stored phone; full public Profile UI + undercover controls.
 - **P1 — Phase 3:** Category system (firearms/knives blocked + blocked-keyword filter), Listing CRUD, photos/video upload (object storage), Offers, Transaction (Lane A PayPal/Venmo handoff).

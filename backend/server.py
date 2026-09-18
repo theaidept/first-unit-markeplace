@@ -15,7 +15,7 @@ from typing import Optional, List
 from enum import Enum
 from html import escape
 from html.parser import HTMLParser
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 
 import jwt
 import bcrypt
@@ -1410,7 +1410,7 @@ def pay_targets(seller: dict, amount) -> list:
     if seller.get("paypal_me"):
         h = _clean_handle(seller["paypal_me"])
         targets.append({"method": "paypal", "label": "PayPal.me", "handle": f"@{h}",
-                        "url": f"https://www.paypal.com/paypalme/{h}/{amt}"})
+                        "url": f"https://www.paypal.com/paypalme/{quote(h)}/{amt}"})
     elif seller.get("paypal_email"):
         targets.append({"method": "paypal", "label": "PayPal", "handle": seller["paypal_email"],
                         "url": "https://www.paypal.com/myaccount/transfer/homepage/pay",
@@ -1418,7 +1418,7 @@ def pay_targets(seller: dict, amount) -> list:
     if seller.get("venmo_handle"):
         h = _clean_handle(seller["venmo_handle"])
         targets.append({"method": "venmo", "label": "Venmo", "handle": f"@{h}",
-                        "url": f"https://venmo.com/{h}?txn=pay&amount={amt}&note=First%20Unit%20sale"})
+                        "url": f"https://venmo.com/{quote(h)}?txn=pay&amount={amt}&note=First%20Unit%20sale"})
     return targets
 
 
@@ -1455,6 +1455,9 @@ async def paypal_start(user: dict = Depends(require_verified)):
 
 # --------------------------- Transactions (handoff) ---------------------------
 async def create_transaction(listing: dict, buyer_id: str, amount: float, method: str = "pending"):
+    existing = await db.transactions.find_one({"listing_id": listing["id"], "status": "agreed"})
+    if existing:
+        raise HTTPException(status_code=400, detail="This listing already has an open transaction in progress.")
     doc = {
         "id": str(uuid.uuid4()), "listing_id": listing["id"], "buyer_id": buyer_id,
         "seller_id": listing["seller_id"], "agreed_amount": float(amount),

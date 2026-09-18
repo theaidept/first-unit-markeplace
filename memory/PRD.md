@@ -61,6 +61,15 @@ First Unit is a mobile-first, **verified-only marketplace WEBSITE** (standard re
 - All routes behind require_verified; sellers shown via public profile layer only.
 - Tested: 100% backend + 100% frontend (iteration_6), zero issues.
 
+## Implemented (2026-09-18) — Phase 5 Lane A Off-Platform Payments
+- **No fund custody (constraint 6):** First Unit never holds funds — no wallet/escrow/balance anywhere (verified). Members link their OWN PayPal (PayPal.me handle capture, honest fallback until Connect keys are pasted; OAuth `start` wired) + optional PayPal email + Venmo handle; all editable in /profile.
+- **Transaction handoff:** Buy Now OR seller accepting an offer creates a Transaction (listing, buyer, seller, agreed_amount, status agreed). Buyer sees the seller's correct PayPal.me/Venmo pay path (URL-encoded) + meet-up guidance; seller view never exposes pay targets. Guard prevents duplicate open transactions per listing.
+- **States agreed|completed|cancelled:** either party marks complete; both complete => listing `sold`. Either party can cancel while agreed.
+- **Admin ListingFeeConfig:** amount default 0, active default false; admin GET/PUT; NOT charged, NOT wired to Stripe (Lane B placeholder).
+- **Frontend:** PaymentSettings on /profile, /transactions (Deals) with pay buttons + complete/cancel, Buy Now/accept navigation, admin fee panel, nav-deals link.
+- Tested: 100% backend + 100% frontend (iteration_7), zero issues.
+- **PENDING USER INPUT:** real PayPal Connect Client ID/Secret (sandbox) to flip PayPal from handle-capture fallback to OAuth (no code changes beyond env + restart).
+
 ## Backlog (prioritized)
 - **P0 — Phase 2:** Real ID.me verification behind provider abstraction; SMS status alerts (Twilio) using stored phone; full public Profile UI + undercover controls.
 - **P1 — Phase 3:** Category system (firearms/knives blocked + blocked-keyword filter), Listing CRUD, photos/video upload (object storage), Offers, Transaction (Lane A PayPal/Venmo handoff).

@@ -1769,8 +1769,21 @@ async def boost_options(user: dict = Depends(require_verified)):
 
 async def _apply_boost(listing_id: str, bt: dict, stripe_ref: str):
     starts = datetime.now(timezone.utc)
-    ends = None if bt.get("until_sold") else starts + timedelta(days=int(bt.get("duration_days") or 0))
-    ends_iso = ends.isoformat() if ends else None
+    new_ends = None if bt.get("until_sold") else starts + timedelta(days=int(bt.get("duration_days") or 0))
+    # Never shorten an already-active featured window (stacking a shorter boost keeps the longer end).
+    listing = await db.listings.find_one({"id": listing_id}, {"_id": 0})
+    if listing and _featured_active(listing):
+        cur = listing.get("featured_until")
+        if cur is None:  # existing 'Until sold' boost is effectively unlimited — keep it
+            new_ends = None
+        elif new_ends is not None:
+            try:
+                cur_dt = datetime.fromisoformat(cur)
+                if cur_dt > new_ends:
+                    new_ends = cur_dt
+            except Exception:
+                pass
+    ends_iso = new_ends.isoformat() if new_ends else None
     await db.boost_purchases.insert_one({
         "id": str(uuid.uuid4()), "listing_id": listing_id, "boost_type_id": bt["id"],
         "boost_name": bt["name"], "until_sold": bt.get("until_sold", False),
@@ -1825,6 +1838,8 @@ async def boost_checkout(listing_id: str, body: BoostCheckoutBody, user: dict = 
         raise HTTPException(status_code=404, detail="Listing not found")
     if listing["seller_id"] != user["id"]:
         raise HTTPException(status_code=403, detail="Not your listing")
+    if listing.get("status") != "live":
+        raise HTTPException(status_code=400, detail="Only a live listing can be boosted")
     bt = await db.boost_types.find_one({"id": body.boost_type_id})
     if not bt or not bt.get("active") or bt.get("hidden"):
         raise HTTPException(status_code=404, detail="Boost tier not available")

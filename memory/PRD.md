@@ -77,11 +77,21 @@ First Unit is a mobile-first, **verified-only marketplace WEBSITE** (standard re
 - **Story entity** {listing, video, order, active} auto-synced on publish (created when live+video, deactivated otherwise). Pre-recorded only — no live streaming.
 - Tested: 100% backend + 100% frontend (iteration_8), zero issues.
 
+## Implemented (2026-09-18) — Phase 7 Lane B Monetization (Stripe boosts)
+- **Stripe = platform merchant, test mode (constraint 6):** claimable sandbox provisioned (Flow A); keys in backend/.env (STRIPE_SECRET_KEY/PUBLISHABLE/ACCOUNT_ID/WEBHOOK_SECRET/MODE). Stripe is used ONLY for platform services (boosts now, listing fee later) — NEVER for member↔member item money (that stays Lane A / off-platform).
+- **Admin boost management** (`/admin` boost-admin-panel): BoostType {name, price, duration_days | until_sold, hidden, active, order}. Admin can create / edit / hide-show / deactivate-reactivate / delete tiers, and a global `boost_feature` toggle hides the feature entirely. All pricing admin-controlled — no hard-coded prices. Seeded defaults: 3-Day $9, 7-Day $19, Until Sold $29.
+- **Sell wizard Pricing step** (screen 05): shows non-hidden active tiers + a listing summary (asking price, marketplace fee = configured listing fee $0 at launch, boost line, total to publish). "Publish without featuring" is free; if boosts hidden entirely the step still publishes free. Publish creates the live listing first, then redirects to Stripe hosted checkout for the boost (`origin_url` → /payment/success|/payment/cancel).
+- **Boost checkout + fulfillment:** POST /listings/{id}/boost/checkout (owner-only, live-listing-only) → inline dynamic price_data session (server-side amount = boost price + active fee). Unauthenticated GET /payments/status/{session_id} polls Stripe and idempotently fulfills; POST /api/stripe/webhook also fulfills. `_fulfill_payment` branches on kind — `boost` now, `listing_fee` reuses the SAME layer later with no rebuild.
+- **BoostPurchase** {listing, boost_type, stripe_ref, starts_at, ends_at}. `_apply_boost` sets listing featured + featured_until (null = Until Sold, until listing sells); stacking never shortens a longer active window. `_featured_active` gates the FEATURED tag/expiry. Feed surfaces featured first; Featured Stories reel gives boosted listings priority.
+- Tested: 100% backend (13/13) + 100% frontend (iteration_9), zero blocking issues. Post-test hardening: live-only boost guard + longest-window stacking (both re-verified).
+
 ## Backlog (prioritized)
-- **P0 — Phase 2:** Real ID.me verification behind provider abstraction; SMS status alerts (Twilio) using stored phone; full public Profile UI + undercover controls.
-- **P1 — Phase 3:** Category system (firearms/knives blocked + blocked-keyword filter), Listing CRUD, photos/video upload (object storage), Offers, Transaction (Lane A PayPal/Venmo handoff).
-- **P1 — Phase 4:** Messaging (MessageThread/Message), Reports/moderation queue, AdminAction expansion.
-- **P2 — Phase 5:** Stories (shoppable overlay), BoostType/BoostPurchase via Stripe (Lane B), ListingFeeConfig, JobPosting board.
+- **P1:** Phase 8 verified-member messaging (MessageThread/Message; Message button currently inert).
+- **P1:** Real ID.me sandbox creds + callback validation; real Twilio SMS creds + delivery.
+- **P2:** Reports/moderation queue expansion, JobPosting board, activate a real listing fee (bills through the existing Stripe layer).
+- **P2:** Refactor — split boosts/payments + listings into routers modules (server.py ~2000 lines).
 
 ## Next Tasks
-- Await Phase 2 prompt (ID.me integration + provider abstraction).
+- Await user acceptance of Phase 7; then Phase 8 messaging or real-provider credentials.
+
+## Historical backlog (pre-Phase 7)

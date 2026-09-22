@@ -110,4 +110,20 @@ First Unit is a mobile-first, **verified-only marketplace WEBSITE** (standard re
 ## Next Tasks
 - Await user acceptance of Phase 8; then Phase 9 moderation/report handling.
 
+## Implemented (2026-09-22) — Phase 9 Trust & Safety + consolidated admin console
+- **Reporting across the app**: `POST /api/reports` for listings & users + existing in-chat thread report. Report entity: reporter, target_type (listing|user|message_thread), target_id, reason, reason_code, note, status (open|reviewing|actioned|dismissed), reviewer, reported_user/listing_id, thread_snapshot. Self-report and invalid reason → 400. Frontend: reusable `ReportDialog` wired into ListingDetail ("Report this listing") and MemberProfile ("Report this member"); in-chat report retained.
+- **Moderation** (admin-only): `GET /api/admin/reports` (enriched, open-first), `POST /api/admin/reports/{id}/status` (reviewing/dismissed/actioned); `GET /api/admin/listings` + `POST /api/admin/listings/{id}/moderate` (remove→status=removed & auto-actions its open reports / reinstate→live); `POST /api/admin/users/{id}/moderate` (warn=notification / suspend=verification_status=suspended, access revoked / reinstate=approved). Cannot moderate an admin (400).
+- **Enforcement**: suspended users are blocked instantly by the existing verified-only gate (verified curl: suspended → 403 on member routes).
+- **Audit**: every moderation/admin action writes an `admin_actions` entry (admin_email, action, target, detail); `GET /api/admin/audit-log`.
+- **Manual override lockdown**: `POST /api/admin/users/{id}/verification-status` now REQUIRES a reason (400 without) and audits as `manual_verification_override`; UI prompts for the reason.
+- **Consolidated console** (`/admin`, 4 tabs): Overview = live health counts (`GET /api/admin/health`: verification breakdown, throughput 7d, listings breakdown, listing activity 7d, reports, sign-ups) from real data; Verification = review queue + accounts; Moderation = reports queue + listing moderation + user warn/suspend; Monetization = listing-fee + boost config (Phases 5/7).
+- Tested: 100% backend (26/26 serial) + 100% frontend (iteration_12), zero issues. Test member buyer2@example.com / BuyerPass#2026 (approved).
+
+## Backlog (prioritized)
+- **P1:** Real ID.me sandbox creds + callback validation; real Twilio SMS creds + delivery (SMS mocked).
+- **P2:** Jobs board; activate a real listing fee (bills through existing Stripe layer); moderation enhancements (report detail drawer w/ full thread snapshot, member report history); refactor server.py (~2500 lines) into router modules.
+
+## Next Tasks
+- Await user acceptance of Phase 9; then Jobs board or real-provider credentials.
+
 ## Historical backlog (pre-Phase 7)

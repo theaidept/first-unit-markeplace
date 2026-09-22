@@ -20,6 +20,8 @@ import MyProfile from "./pages/MyProfile";
 import AdminPanel from "./pages/AdminPanel";
 import PaymentSuccess from "./pages/PaymentSuccess";
 import PaymentCancel from "./pages/PaymentCancel";
+import Messages from "./pages/Messages";
+import Thread from "./pages/Thread";
 
 function App() {
   return (
@@ -117,6 +119,22 @@ function App() {
             element={
               <RequireApproved>
                 <PaymentCancel />
+              </RequireApproved>
+            }
+          />
+          <Route
+            path="/messages"
+            element={
+              <RequireApproved>
+                <Messages />
+              </RequireApproved>
+            }
+          />
+          <Route
+            path="/messages/:threadId"
+            element={
+              <RequireApproved>
+                <Thread />
               </RequireApproved>
             }
           />

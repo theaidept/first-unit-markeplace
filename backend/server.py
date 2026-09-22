@@ -1902,6 +1902,263 @@ async def stripe_webhook(request: Request):
     return {"status": "ok"}
 
 
+# ---------------------------------------------------------------------------
+# Phase 8 — verified-only buyer↔seller messaging + in-chat reporting.
+# Only approved members (require_verified) can send/receive. Participants are
+# always shown via the public handle layer (constraint 3). Reports created here;
+# the moderation queue/handling is Phase 9.
+# ---------------------------------------------------------------------------
+REPORT_REASONS = {
+    "scam_fraud": "Scam or fraud",
+    "prohibited_item": "Prohibited item",
+    "harassment": "Harassment",
+    "spam": "Spam",
+    "other": "Other",
+}
+ACTIVE_VIEW_WINDOW = 30  # seconds; within this the recipient is treated as "actively viewing"
+
+
+async def create_notification(user_id, ntype, title, body, thread_id=None, listing_id=None):
+    await db.notifications.insert_one({
+        "id": str(uuid.uuid4()), "user_id": user_id, "type": ntype, "title": title,
+        "body": body, "thread_id": thread_id, "listing_id": listing_id,
+        "read": False, "created_at": now_iso(),
+    })
+
+
+def message_email_html(sender_handle: str, preview: str, link: str) -> str:
+    return (
+        f'<table role="presentation" width="100%" style="background:#f2f3f5;padding:32px 0">'
+        f'<tr><td align="center"><table role="presentation" width="520" '
+        f'style="background:#ffffff;border:1px solid #d9dce1;font-family:Arial,Helvetica,sans-serif">'
+        f'<tr><td style="background:#0b1f42;padding:20px 28px;color:#ffffff;font-size:18px;'
+        f'letter-spacing:2px;font-weight:bold">FIRST UNIT</td></tr>'
+        f'<tr><td style="padding:28px">'
+        f'<h1 style="font-size:19px;color:#12151b;margin:0 0 12px">New message from {escape(sender_handle)}</h1>'
+        f'<p style="font-size:14px;color:#50565f;line-height:1.6;border-left:3px solid #a6192e;'
+        f'padding-left:12px">{escape(preview)}</p>'
+        f'<p style="margin:22px 0"><a href="{link}" style="background:#a6192e;color:#ffffff;'
+        f'text-decoration:none;padding:12px 24px;font-size:14px;font-weight:bold;border-radius:2px;'
+        f'display:inline-block">Open conversation</a></p>'
+        f'<p style="font-size:12px;color:#868c96">Keep payments off-platform and meet in a safe, '
+        f'public place. First Unit will never ask for your password or credential documents.</p></td></tr>'
+        f'<tr><td style="padding:16px 28px;background:#f2f3f5;font-size:11px;color:#868c96">'
+        f'Sent by First Unit — a verified marketplace for first responders.</td></tr>'
+        f'</table></td></tr></table>'
+    )
+
+
+async def _thread_other(thread: dict, me: str) -> str:
+    return next((p for p in thread["participants"] if p != me), me)
+
+
+async def _listing_brief(listing_id: str) -> dict:
+    l = await db.listings.find_one({"id": listing_id}, {"_id": 0})
+    if not l:
+        return {"id": listing_id, "title": "Listing unavailable", "price": None, "photo": None}
+    return {"id": l["id"], "title": l["title"], "price": l.get("price"),
+            "photo": (l.get("photos") or [None])[0], "status": l.get("status")}
+
+
+async def _thread_unread(thread_id: str, me: str) -> int:
+    return await db.messages.count_documents(
+        {"thread_id": thread_id, "sender_id": {"$ne": me}, "read_by": {"$ne": me}})
+
+
+async def thread_summary(thread: dict, me: str) -> dict:
+    other_id = await _thread_other(thread, me)
+    return {
+        "id": thread["id"],
+        "listing": await _listing_brief(thread["listing_id"]),
+        "other": await seller_public(other_id),
+        "last_message": thread.get("last_message"),
+        "last_message_at": thread.get("last_message_at"),
+        "unread_count": await _thread_unread(thread["id"], me),
+        "updated_at": thread.get("updated_at"),
+    }
+
+
+def message_public(m: dict, me: str) -> dict:
+    return {
+        "id": m["id"], "sender_id": m["sender_id"], "body": m["body"],
+        "created_at": m["created_at"], "mine": m["sender_id"] == me,
+        "read": me in m.get("read_by", []) or m["sender_id"] == me,
+    }
+
+
+class ThreadStartBody(BaseModel):
+    listing_id: str
+    body: Optional[str] = None
+
+
+class MessageBody(BaseModel):
+    body: str = Field(min_length=1, max_length=4000)
+
+
+class ReportBody(BaseModel):
+    reason: str
+    note: Optional[str] = Field(default=None, max_length=2000)
+
+
+async def _get_thread_guarded(thread_id: str, me: str) -> dict:
+    thread = await db.message_threads.find_one({"id": thread_id})
+    if not thread or me not in thread.get("participants", []):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return thread
+
+
+async def _deliver_message(thread: dict, sender: dict, body_text: str):
+    """Insert a message, bump the thread, and notify the recipient (in-app always;
+    email + SMS only when they are not actively viewing the thread)."""
+    me = sender["id"]
+    recipient_id = await _thread_other(thread, me)
+    msg = {
+        "id": str(uuid.uuid4()), "thread_id": thread["id"], "sender_id": me,
+        "body": body_text, "read_by": [me], "created_at": now_iso(),
+    }
+    await db.messages.insert_one(msg)
+    await db.message_threads.update_one({"id": thread["id"]}, {"$set": {
+        "last_message": body_text[:160], "last_message_at": now_iso(),
+        "last_sender_id": me, "updated_at": now_iso()}})
+
+    sender_profile = await db.profiles.find_one({"user_id": me}, {"_id": 0})
+    sender_handle = public_profile(sender_profile)["display_handle"] if sender_profile else "A member"
+    preview = body_text[:140]
+    link = f"{FRONTEND_URL}/messages/{thread['id']}"
+
+    await create_notification(recipient_id, "message", f"New message from {sender_handle}",
+                              preview, thread_id=thread["id"], listing_id=thread["listing_id"])
+
+    # Actively-viewing check: recipient opened this thread within the last ACTIVE_VIEW_WINDOW.
+    viewed = (thread.get("last_viewed") or {}).get(recipient_id)
+    actively_viewing = False
+    if viewed:
+        try:
+            actively_viewing = (datetime.now(timezone.utc) - datetime.fromisoformat(viewed)).total_seconds() < ACTIVE_VIEW_WINDOW
+        except Exception:
+            actively_viewing = False
+    if not actively_viewing:
+        recipient = await db.users.find_one({"id": recipient_id}, {"_id": 0})
+        if recipient:
+            if recipient.get("email"):
+                try:
+                    await send_email(to=recipient["email"],
+                                     subject=f"First Unit — new message from {sender_handle}",
+                                     html=message_email_html(sender_handle, preview, link))
+                except Exception as e:
+                    logger.error(f"message email failed: {e}")
+            if recipient.get("phone"):
+                try:
+                    await send_sms(recipient["phone"], f"First Unit: new message from {sender_handle}. {preview}")
+                except Exception as e:
+                    logger.error(f"message sms failed: {e}")
+    return msg
+
+
+@api.post("/threads")
+async def start_thread(body: ThreadStartBody, user: dict = Depends(require_verified)):
+    listing = await db.listings.find_one({"id": body.listing_id}, {"_id": 0})
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    seller_id = listing["seller_id"]
+    if seller_id == user["id"]:
+        raise HTTPException(status_code=400, detail="You can't message yourself on your own listing")
+    existing = await db.message_threads.find_one({
+        "listing_id": body.listing_id, "participants": {"$all": [user["id"], seller_id]}})
+    if existing:
+        thread = existing
+    else:
+        thread = {
+            "id": str(uuid.uuid4()), "listing_id": body.listing_id,
+            "participants": [user["id"], seller_id], "buyer_id": user["id"], "seller_id": seller_id,
+            "last_message": None, "last_message_at": None, "last_sender_id": None,
+            "last_viewed": {}, "created_at": now_iso(), "updated_at": now_iso(),
+        }
+        await db.message_threads.insert_one(thread)
+    if body.body and body.body.strip():
+        await _deliver_message(thread, user, body.body.strip())
+        thread = await db.message_threads.find_one({"id": thread["id"]})
+    return await thread_summary(thread, user["id"])
+
+
+@api.get("/threads")
+async def list_threads(user: dict = Depends(require_verified)):
+    threads = await db.message_threads.find(
+        {"participants": user["id"]}, {"_id": 0}).sort("updated_at", -1).to_list(500)
+    out = [await thread_summary(t, user["id"]) for t in threads]
+    total_unread = sum(t["unread_count"] for t in out)
+    return {"threads": out, "total_unread": total_unread}
+
+
+@api.get("/messages/unread-count")
+async def messages_unread_count(user: dict = Depends(require_verified)):
+    n = await db.messages.count_documents(
+        {"sender_id": {"$ne": user["id"]}, "read_by": {"$ne": user["id"]},
+         "thread_id": {"$in": [t["id"] async for t in db.message_threads.find(
+             {"participants": user["id"]}, {"id": 1})]}})
+    return {"unread": n}
+
+
+@api.get("/threads/{thread_id}")
+async def get_thread(thread_id: str, user: dict = Depends(require_verified)):
+    thread = await _get_thread_guarded(thread_id, user["id"])
+    # Mark the current user as an active viewer + mark their unread messages read.
+    await db.message_threads.update_one(
+        {"id": thread_id}, {"$set": {f"last_viewed.{user['id']}": now_iso()}})
+    await db.messages.update_many(
+        {"thread_id": thread_id, "sender_id": {"$ne": user["id"]}, "read_by": {"$ne": user["id"]}},
+        {"$addToSet": {"read_by": user["id"]}})
+    await db.notifications.update_many(
+        {"user_id": user["id"], "thread_id": thread_id, "read": False}, {"$set": {"read": True}})
+    msgs = await db.messages.find({"thread_id": thread_id}, {"_id": 0}).sort("created_at", 1).to_list(2000)
+    return {
+        "id": thread["id"],
+        "listing": await _listing_brief(thread["listing_id"]),
+        "other": await seller_public(await _thread_other(thread, user["id"])),
+        "messages": [message_public(m, user["id"]) for m in msgs],
+    }
+
+
+@api.post("/threads/{thread_id}/messages")
+async def post_message(thread_id: str, body: MessageBody, user: dict = Depends(require_verified)):
+    thread = await _get_thread_guarded(thread_id, user["id"])
+    msg = await _deliver_message(thread, user, body.body.strip())
+    return message_public(msg, user["id"])
+
+
+@api.post("/threads/{thread_id}/report")
+async def report_thread(thread_id: str, body: ReportBody, user: dict = Depends(require_verified)):
+    if body.reason not in REPORT_REASONS:
+        raise HTTPException(status_code=400, detail="Invalid report reason")
+    thread = await _get_thread_guarded(thread_id, user["id"])
+    other_id = await _thread_other(thread, user["id"])
+    msgs = await db.messages.find({"thread_id": thread_id}, {"_id": 0}).sort("created_at", 1).to_list(2000)
+    snapshot = [{"sender_id": m["sender_id"], "body": m["body"], "created_at": m["created_at"]} for m in msgs]
+    await db.reports.insert_one({
+        "id": str(uuid.uuid4()), "reporter": user["id"], "target_type": "message_thread",
+        "target_id": thread_id, "reported_user": other_id, "listing_id": thread["listing_id"],
+        "reason": REPORT_REASONS[body.reason], "reason_code": body.reason,
+        "note": (body.note or "").strip() or None, "thread_snapshot": snapshot,
+        "status": "open", "reviewer": None, "created_at": now_iso(),
+    })
+    return {"status": "ok", "message": "Report submitted to Trust & Safety."}
+
+
+@api.get("/notifications")
+async def get_notifications(user: dict = Depends(require_verified)):
+    docs = await db.notifications.find(
+        {"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    unread = sum(1 for d in docs if not d.get("read"))
+    return {"notifications": docs, "unread": unread}
+
+
+@api.post("/notifications/read")
+async def mark_notifications_read(user: dict = Depends(require_verified)):
+    await db.notifications.update_many(
+        {"user_id": user["id"], "read": False}, {"$set": {"read": True}})
+    return {"status": "ok"}
+
+
 @api.get("/")
 async def root():
     return {"service": "First Unit API", "status": "ok"}

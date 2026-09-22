@@ -78,6 +78,18 @@ export default function ListingDetail() {
     }
   };
 
+  const messageSeller = async () => {
+    setBusy(true);
+    try {
+      const { data } = await api.post("/threads", { listing_id: id });
+      navigate(`/messages/${data.id}`);
+    } catch (err) {
+      toast.error(formatApiErrorDetail(err.response?.data?.detail));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const actOffer = async (offerId, action) => {
     try {
       const { data } = await api.post(`/offers/${offerId}/${action}`);
@@ -218,9 +230,20 @@ export default function ListingDetail() {
                   {s.agency && <div className="sc-agency">{s.agency}</div>}
                 </div>
               </div>
-              <button className="btn btn-ghost btn-block" disabled title="Messaging launches in a later phase" data-testid="message-btn">
-                <MessageSquare size={15} /> Message (coming soon)
-              </button>
+              {isOwner ? (
+                <div className="mb-note" style={{ padding: "8px 0", fontSize: 12.5 }}>
+                  This is your listing. Buyer messages appear in your inbox.
+                </div>
+              ) : (
+                <>
+                  <button className="btn btn-primary btn-block" onClick={messageSeller} disabled={busy} data-testid="message-btn">
+                    <MessageSquare size={15} /> Message seller
+                  </button>
+                  <div className="mb-note" style={{ padding: "8px 0 0", fontSize: 11.5, color: "var(--text-faint)" }}>
+                    Keep it respectful. Payment stays off-platform; never share credentials or ID documents.
+                  </div>
+                </>
+              )}
             </div>
 
             {/* Offers */}

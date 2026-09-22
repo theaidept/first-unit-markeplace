@@ -94,4 +94,20 @@ First Unit is a mobile-first, **verified-only marketplace WEBSITE** (standard re
 ## Next Tasks
 - Await user acceptance of Phase 7; then Phase 8 messaging or real-provider credentials.
 
+## Implemented (2026-09-22) — Phase 8 Verified-only Messaging
+- **Buyer↔seller direct messaging** initiated from a listing's "Message seller" button/seller card. `message_threads` (tied to listing + 2 participants, buyer/seller) + `messages` (read_by tracking). Endpoints: POST/GET `/api/threads`, GET `/api/threads/{id}` (marks read + records `last_viewed`), POST `/api/threads/{id}/messages`, GET `/api/messages/unread-count`. All `require_verified`; participant-guarded (404 otherwise).
+- **Verified-only enforced** (constraint 1): unverified/unauth = 403 on every messaging route and cannot reach `/messages`. Participants shown via public-handle layer only (constraint 3) — no real name/email leak; avatar nulled server-side when private.
+- **Conduct rules** surfaced in the conversation UI + **in-chat Report** (POST `/api/threads/{id}/report`) creating a `reports` record with `target_type='message_thread'`, reported_user, listing_id, and full `thread_snapshot`. Preset reasons (scam_fraud/prohibited_item/harassment/spam/other) + optional note; invalid reason → 400. (Phase 9 will handle moderation.)
+- **Notifications**: in-app `notifications` always created for the recipient; email (Resend) + SMS (Twilio) fire only when recipient is NOT actively viewing the thread (30s `last_viewed` window). **SMS is MOCKED** until Twilio creds are supplied. Nav shows a live unread badge (polls `/api/messages/unread-count`); inbox polls 5s, conversation polls 4s.
+- Frontend: `Messages.jsx` (inbox), `Thread.jsx` (chat + report modal), listing "Message seller" wired, AppNav Messages link+badge, routes under `RequireApproved`.
+- Tested: 100% backend (15/15) + 100% frontend (iteration_11), zero issues. Test member: buyer2@example.com / BuyerPass#2026 (approved).
+
+## Backlog (prioritized)
+- **P1:** Phase 9 moderation queue / report-handling admin UI (reports already created for listings + message_threads).
+- **P1:** Real ID.me sandbox creds + callback validation; real Twilio SMS creds + delivery (SMS currently mocked).
+- **P2:** Jobs board, activate a real listing fee (bills through the existing Stripe layer), refactor server.py (~2200 lines) into router modules.
+
+## Next Tasks
+- Await user acceptance of Phase 8; then Phase 9 moderation/report handling.
+
 ## Historical backlog (pre-Phase 7)

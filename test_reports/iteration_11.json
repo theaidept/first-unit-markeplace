@@ -1,0 +1,32 @@
+{
+  "summary": "Phase 8 messaging (verified-only buyer↔seller DMs, listing-tied threads, polling, unread badge, in-chat report, notifications) tested end-to-end across backend (pytest, 15/15 pass) and frontend (Playwright, two sessions owner + buyer2 + one fresh unverified). All requested testids present and wired: message-btn, chat-shell, chat-listing-link, chat-conduct, message-input, message-send-btn, report-open-btn, report-modal, report-reason-select, report-note-input, report-submit-btn, thread-back-btn, messages-page, thread-row-{id}, thread-unread-{id}, nav-messages, nav-unread-badge. Public-handle layer verified — buyer sees 'First Unit Owner' + Verified badge, no email/real-name leak. Verified-only gate confirmed on both API (403 for unverified /threads, /threads/{id}, /messages, /messages/unread-count, /notifications) and UI (fresh unverified register lands on /verification and cannot reach /messages; nav-messages link hidden). Owner correctly sees NO message-btn on own listing. Reporting: invalid reason returns 400; all 5 valid codes (scam_fraud, prohibited_item, harassment, spam, other) return 200 and create a report record. Non-participant guard: admin (verified 3rd party) gets 404 on both GET /threads/{id} and POST /threads/{id}/messages. Unread flow: buyer sends → owner sees nav-unread-badge=1 + thread-unread badge in inbox; opening thread clears both (GET marks read). Reply from owner → visible to buyer. Notifications endpoint returns 'message' type entry with correct thread_id. SMS is mocked as expected — no error path in message send.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_messaging_phase8.py",
+    "/app/test_reports/pytest/phase8_messaging.xml",
+    "/app/test_reports/screens/messaging_p8_unverified.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py /api/messages/unread-count: builds `thread_id: {\"$in\": [...]}` via an inline `async for` list comprehension which loads every thread id twice per poll (poll every 10s per client). Prefer a single aggregate ($lookup) or cache the participant thread-id list. Cheap now, will matter at scale.",
+    "server.py post_message returns immediately after _deliver_message; email + SMS are awaited inline inside _deliver_message, so a slow Resend/Twilio provider will block the sender's HTTP response. Consider fire-and-forget via asyncio.create_task or a background queue so message send latency isn't provider-bound.",
+    "server.py active-viewing check uses `last_viewed[recipient_id]` on the thread doc snapshot passed into _deliver_message — but that snapshot was read BEFORE the send. For start_thread the thread is re-fetched, but for post_message the caller passes the pre-fetch snapshot, so last_viewed there is fresh (OK). Just worth a comment.",
+    "Thread.jsx polls every 4s regardless of tab visibility — add `document.visibilityState==='visible'` gate to avoid needless traffic on background tabs (same issue as AppNav 10s poll).",
+    "Thread.jsx report modal: no keyboard Esc handler and the report-note-input has no maxLength UI hint though backend caps at 2000.",
+    "Messages.jsx / Thread.jsx: no error toast when the /threads or /threads/{id} poll fails — silently sets empty/notFound. If the connection drops mid-session, the UI degrades to 'Conversation not found' with no retry.",
+    "AppNav.jsx unread poll: only 10s cadence, so after sending a reply the sender's own OTHER threads' unread indicators can lag up to 10s; acceptable but worth documenting."
+  ],
+  "updated_files": ["/app/backend/tests/test_messaging_phase8.py"],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "100% (all requested flows verified across owner + buyer + unverified)"},
+  "test_credentials": "Owner theaidept@gmail.com / FirstUnit#Owner2026!  ·  Buyer buyer2@example.com / BuyerPass#2026  ·  Fresh unverified registered ad-hoc via /register",
+  "seed_data_creation": "Test created 1 thread (buyer2 ↔ owner about listing 'Duty Belt Set', thread id acfc8c17-e10a-49e5-813f-dcf9aad9543b) with multiple TEST_ messages and 6 report records (1 harassment via UI + 5 via pytest for each reason code) + 1 TEST_unv_*@example.com unverified user. Prefixed with TEST_ per convention.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Phase 8 messaging fully verified (backend 15/15, frontend two-session e2e). Reusable test file at /app/backend/tests/test_messaging_phase8.py can be run with `python -m pytest backend/tests/test_messaging_phase8.py -o addopts='' -p no:randomly`. Note that /app/backend/pytest.ini forces -n auto (xdist loadscope), and STATE is a module-dict for thread_id sharing across classes — always keep tests in class order (they run top-to-bottom in a single worker under loadscope). For future Phase 9 moderation UI: reports table now has entries with target_type='message_thread', reason_code in {scam_fraud,prohibited_item,harassment,spam,other}, status='open', full thread_snapshot embedded.",
+  "rca of the issue": "No issue — all functionality per spec."
+}

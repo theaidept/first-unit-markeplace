@@ -4,9 +4,10 @@ import { AppNav } from "../components/AppNav";
 import { AvatarRing } from "../components/AvatarRing";
 import { VerifiedBadge } from "../components/VerifiedBadge";
 import { CATEGORY_LABELS } from "../components/ListingCard";
+import { ReportDialog } from "../components/ReportDialog";
 import api, { fileUrl, formatApiErrorDetail } from "../lib/api";
 import { toast } from "sonner";
-import { MessageSquare, MapPin, ShoppingBag, Tag, ShieldCheck } from "lucide-react";
+import { MessageSquare, MapPin, ShoppingBag, Tag, ShieldCheck, Flag } from "lucide-react";
 
 const OFFER_PILL = { pending: "pending", accepted: "ok", declined: "review", withdrawn: "review" };
 
@@ -22,6 +23,7 @@ export default function ListingDetail() {
   const [showOffer, setShowOffer] = useState(false);
   const [meetup, setMeetup] = useState("");
   const [busy, setBusy] = useState(false);
+  const [showReport, setShowReport] = useState(false);
 
   const loadOffers = async () => {
     try {
@@ -242,6 +244,9 @@ export default function ListingDetail() {
                   <div className="mb-note" style={{ padding: "8px 0 0", fontSize: 11.5, color: "var(--text-faint)" }}>
                     Keep it respectful. Payment stays off-platform; never share credentials or ID documents.
                   </div>
+                  <button className="listing-report-link" onClick={() => setShowReport(true)} data-testid="report-listing-btn">
+                    <Flag size={12} /> Report this listing
+                  </button>
                 </>
               )}
             </div>
@@ -280,6 +285,13 @@ export default function ListingDetail() {
           </div>
         </div>
       </div>
+      <ReportDialog
+        open={showReport}
+        onClose={() => setShowReport(false)}
+        targetType="listing"
+        targetId={id}
+        title="Report this listing"
+      />
     </div>
   );
 }

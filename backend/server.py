@@ -810,11 +810,14 @@ async def admin_list_users(admin: dict = Depends(require_admin)):
 @api.post("/admin/users/{user_id}/verification-status")
 async def admin_set_verification(user_id: str, body: SetVerificationBody,
                                  admin: dict = Depends(require_admin)):
-    """TEMPORARY internal control so later phases can be built/tested before ID.me lands."""
+    """Deliberate manual override — requires a reason and is fully audited (not an open backdoor)."""
+    if not (body.note or "").strip():
+        raise HTTPException(status_code=400, detail="A reason is required for a manual verification override")
     user = await db.users.find_one({"id": user_id})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     new_status = body.verification_status.value
+    prev_status = user.get("verification_status")
     await db.users.update_one({"id": user_id}, {"$set": {"verification_status": new_status}})
 
     rec = await db.verification_records.find_one({"user_id": user_id})
@@ -828,19 +831,12 @@ async def admin_set_verification(user_id: str, body: SetVerificationBody,
                                      {"$set": {"verified_badge": new_status == "approved"}})
         await log_verification_event(
             rec["id"],
-            f"Status set to {new_status.replace('_', ' ')}",
-            "Trust & Safety Team",
+            f"Manual override to {new_status.replace('_', ' ')}: {body.note.strip()}",
+            f"Admin override ({admin['email']})",
             new_status.replace("_", " ").title(),
         )
-    await db.admin_actions.insert_one({
-        "id": str(uuid.uuid4()),
-        "admin_id": admin["id"],
-        "action": "set_verification_status",
-        "target_type": "user",
-        "target_id": user_id,
-        "detail": {"status": new_status, "note": body.note},
-        "timestamp": now_iso(),
-    })
+    await audit(admin, "manual_verification_override", "user", user_id,
+                {"from": prev_status, "to": new_status, "reason": body.note.strip()})
     return {"status": "ok", "verification_status": new_status}
 
 
@@ -2159,10 +2155,278 @@ async def mark_notifications_read(user: dict = Depends(require_verified)):
     return {"status": "ok"}
 
 
+# ---------------------------------------------------------------------------
+# Phase 9 — Trust & Safety: reporting across the app + admin moderation.
+# Reports: reporter, target_type (listing|user|message_thread), target_id, reason,
+# status (open|reviewing|actioned|dismissed), reviewer. Every moderation/admin
+# action writes an AdminAction audit entry. Admin-only routes; verified-only members.
+# ---------------------------------------------------------------------------
+REPORT_STATUSES = {"open", "reviewing", "actioned", "dismissed"}
+
+
+class CreateReportBody(BaseModel):
+    target_type: str  # "listing" | "user"
+    target_id: str
+    reason: str
+    note: Optional[str] = Field(default=None, max_length=2000)
+
+
+async def audit(admin: dict, action: str, target_type: str, target_id: str, detail: dict = None):
+    await db.admin_actions.insert_one({
+        "id": str(uuid.uuid4()), "admin_id": admin["id"], "admin_email": admin.get("email"),
+        "action": action, "target_type": target_type, "target_id": target_id,
+        "detail": detail or {}, "timestamp": now_iso(),
+    })
+
+
+@api.post("/reports")
+async def create_report(body: CreateReportBody, user: dict = Depends(require_verified)):
+    if body.reason not in REPORT_REASONS:
+        raise HTTPException(status_code=400, detail="Invalid report reason")
+    if body.target_type not in ("listing", "user"):
+        raise HTTPException(status_code=400, detail="Invalid report target")
+    doc = {
+        "id": str(uuid.uuid4()), "reporter": user["id"], "target_type": body.target_type,
+        "target_id": body.target_id, "reason": REPORT_REASONS[body.reason],
+        "reason_code": body.reason, "note": (body.note or "").strip() or None,
+        "status": "open", "reviewer": None, "created_at": now_iso(), "updated_at": now_iso(),
+    }
+    if body.target_type == "listing":
+        listing = await db.listings.find_one({"id": body.target_id}, {"_id": 0})
+        if not listing:
+            raise HTTPException(status_code=404, detail="Listing not found")
+        doc["reported_user"] = listing["seller_id"]
+        doc["listing_id"] = body.target_id
+    else:  # user
+        target = await db.users.find_one({"id": body.target_id}, {"_id": 0})
+        if not target:
+            raise HTTPException(status_code=404, detail="Member not found")
+        if body.target_id == user["id"]:
+            raise HTTPException(status_code=400, detail="You can't report yourself")
+        doc["reported_user"] = body.target_id
+    await db.reports.insert_one(doc)
+    return {"status": "ok", "message": "Report submitted to Trust & Safety."}
+
+
+async def _report_enrich(r: dict) -> dict:
+    out = {
+        "id": r["id"], "target_type": r["target_type"], "target_id": r["target_id"],
+        "reason": r.get("reason"), "reason_code": r.get("reason_code"), "note": r.get("note"),
+        "status": r.get("status", "open"), "reviewer": r.get("reviewer"),
+        "created_at": r.get("created_at"), "listing_id": r.get("listing_id"),
+        "has_snapshot": bool(r.get("thread_snapshot")),
+        "snapshot_count": len(r.get("thread_snapshot", [])),
+    }
+    reporter = r.get("reporter")
+    out["reporter"] = "System" if reporter == "System" else (
+        (await seller_public(reporter))["display_handle"] if reporter else "—")
+    if r.get("reported_user"):
+        out["reported_user"] = r["reported_user"]
+        ru = await db.users.find_one({"id": r["reported_user"]}, {"_id": 0})
+        out["reported_user_handle"] = (await seller_public(r["reported_user"]))["display_handle"]
+        out["reported_user_status"] = ru.get("verification_status") if ru else None
+    lid = r.get("listing_id") or (r["target_id"] if r["target_type"] == "listing" else None)
+    if lid:
+        out["listing"] = await _listing_brief(lid)
+    return out
+
+
+@api.get("/admin/reports")
+async def admin_list_reports(status: Optional[str] = Query(None), admin: dict = Depends(require_admin)):
+    q = {}
+    if status and status in REPORT_STATUSES:
+        q["status"] = status
+    reports = await db.reports.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    # Open first, then by recency.
+    order = {"open": 0, "reviewing": 1, "actioned": 2, "dismissed": 3}
+    reports.sort(key=lambda r: (order.get(r.get("status", "open"), 4), ))
+    return {"reports": [await _report_enrich(r) for r in reports]}
+
+
+@api.get("/admin/reports/{report_id}")
+async def admin_get_report(report_id: str, admin: dict = Depends(require_admin)):
+    r = await db.reports.find_one({"id": report_id}, {"_id": 0})
+    if not r:
+        raise HTTPException(status_code=404, detail="Report not found")
+    out = await _report_enrich(r)
+    out["thread_snapshot"] = r.get("thread_snapshot", [])
+    return out
+
+
+class ReportStatusBody(BaseModel):
+    status: str
+    note: Optional[str] = None
+
+
+@api.post("/admin/reports/{report_id}/status")
+async def admin_set_report_status(report_id: str, body: ReportStatusBody, admin: dict = Depends(require_admin)):
+    if body.status not in REPORT_STATUSES:
+        raise HTTPException(status_code=400, detail="Invalid status")
+    r = await db.reports.find_one({"id": report_id})
+    if not r:
+        raise HTTPException(status_code=404, detail="Report not found")
+    await db.reports.update_one({"id": report_id}, {"$set": {
+        "status": body.status, "reviewer": admin["email"], "updated_at": now_iso()}})
+    await audit(admin, f"report_{body.status}", "report", report_id,
+                {"note": body.note, "reason": r.get("reason")})
+    return {"status": "ok", "report_status": body.status}
+
+
+class ListingModerateBody(BaseModel):
+    action: str  # "remove" | "reinstate"
+    reason: Optional[str] = None
+
+
+@api.get("/admin/listings")
+async def admin_list_listings(status: Optional[str] = Query(None), admin: dict = Depends(require_admin)):
+    q = {}
+    if status and status != "all":
+        q["status"] = status
+    docs = await db.listings.find(q, {"_id": 0}).sort("updated_at", -1).to_list(1000)
+    order = {"flagged": 0, "live": 1, "removed": 2, "sold": 3, "draft": 4}
+    docs.sort(key=lambda d: (order.get(d.get("status"), 5), ))
+    out = []
+    for d in docs:
+        open_reports = await db.reports.count_documents(
+            {"target_type": "listing", "target_id": d["id"], "status": {"$in": ["open", "reviewing"]}})
+        out.append({
+            "id": d["id"], "title": d["title"], "status": d.get("status"),
+            "category": d.get("category"), "price": d.get("price"),
+            "photo": (d.get("photos") or [None])[0], "seller_id": d["seller_id"],
+            "seller": (await seller_public(d["seller_id"]))["display_handle"],
+            "open_reports": open_reports, "created_at": d.get("created_at"),
+        })
+    return {"listings": out}
+
+
+@api.post("/admin/listings/{listing_id}/moderate")
+async def admin_moderate_listing(listing_id: str, body: ListingModerateBody, admin: dict = Depends(require_admin)):
+    listing = await db.listings.find_one({"id": listing_id})
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    if body.action == "remove":
+        new_status = "removed"
+    elif body.action == "reinstate":
+        new_status = "live"
+    else:
+        raise HTTPException(status_code=400, detail="action must be 'remove' or 'reinstate'")
+    await db.listings.update_one({"id": listing_id}, {"$set": {"status": new_status, "updated_at": now_iso()}})
+    await sync_story({**listing, "status": new_status})
+    # Resolve open reports on this listing when removed.
+    if new_status == "removed":
+        await db.reports.update_many(
+            {"target_type": "listing", "target_id": listing_id, "status": {"$in": ["open", "reviewing"]}},
+            {"$set": {"status": "actioned", "reviewer": admin["email"], "updated_at": now_iso()}})
+    await audit(admin, f"listing_{body.action}", "listing", listing_id,
+                {"reason": body.reason, "new_status": new_status})
+    return {"status": "ok", "listing_status": new_status}
+
+
+class UserModerateBody(BaseModel):
+    action: str  # "warn" | "suspend" | "reinstate"
+    reason: Optional[str] = None
+
+
+@api.post("/admin/users/{user_id}/moderate")
+async def admin_moderate_user(user_id: str, body: UserModerateBody, admin: dict = Depends(require_admin)):
+    target = await db.users.find_one({"id": user_id})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target.get("role") == "admin":
+        raise HTTPException(status_code=400, detail="Cannot moderate an admin account")
+    reason = (body.reason or "").strip()
+    if body.action == "warn":
+        await create_notification(
+            user_id, "warning", "A warning from Trust & Safety",
+            reason or "Please review the community conduct rules. Continued issues may lead to suspension.")
+        await audit(admin, "user_warn", "user", user_id, {"reason": reason or None})
+        return {"status": "ok", "action": "warn"}
+    if body.action == "suspend":
+        await db.users.update_one({"id": user_id}, {"$set": {"verification_status": "suspended"}})
+        rec = await db.verification_records.find_one({"user_id": user_id})
+        if rec:
+            await db.verification_records.update_one(
+                {"user_id": user_id}, {"$set": {"current_state": "suspended", "updated_at": now_iso()}})
+        await db.profiles.update_one({"user_id": user_id}, {"$set": {"verified_badge": False}})
+        await create_notification(
+            user_id, "suspension", "Your account has been suspended",
+            reason or "Your access to First Unit has been suspended by Trust & Safety.")
+        await audit(admin, "user_suspend", "user", user_id, {"reason": reason or None})
+        return {"status": "ok", "action": "suspend", "verification_status": "suspended"}
+    if body.action == "reinstate":
+        await db.users.update_one({"id": user_id}, {"$set": {"verification_status": "approved"}})
+        rec = await db.verification_records.find_one({"user_id": user_id})
+        if rec:
+            await db.verification_records.update_one(
+                {"user_id": user_id}, {"$set": {"current_state": "approved", "updated_at": now_iso()}})
+        await db.profiles.update_one({"user_id": user_id}, {"$set": {"verified_badge": True}})
+        await create_notification(
+            user_id, "reinstated", "Your account has been reinstated",
+            "Welcome back — your First Unit access has been restored.")
+        await audit(admin, "user_reinstate", "user", user_id, {"reason": reason or None})
+        return {"status": "ok", "action": "reinstate", "verification_status": "approved"}
+    raise HTTPException(status_code=400, detail="action must be 'warn', 'suspend' or 'reinstate'")
+
+
+@api.get("/admin/audit-log")
+async def admin_audit_log(admin: dict = Depends(require_admin)):
+    docs = await db.admin_actions.find({}, {"_id": 0}).sort("timestamp", -1).to_list(200)
+    return {"actions": docs}
+
+
+@api.get("/admin/health")
+async def admin_health(admin: dict = Depends(require_admin)):
+    week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+
+    async def uc(**q):
+        return await db.users.count_documents(q)
+
+    async def lc(**q):
+        return await db.listings.count_documents(q)
+
+    async def rc(**q):
+        return await db.reports.count_documents(q)
+
+    verification = {
+        "approved": await uc(verification_status="approved", role="member"),
+        "human_review": await db.verification_records.count_documents({"current_state": "human_review"}),
+        "pending": await db.users.count_documents(
+            {"role": "member", "verification_status": {"$in": ["unverified", "pre_screen", "validating"]}}),
+        "rejected": await uc(verification_status="rejected", role="member"),
+        "suspended": await uc(verification_status="suspended", role="member"),
+    }
+    approvals_7d = await db.admin_actions.count_documents(
+        {"action": {"$in": ["verification_approve", "manual_verification_override"]}, "timestamp": {"$gte": week_ago}})
+    return {
+        "verification": verification,
+        "verification_throughput_7d": await db.verification_records.count_documents(
+            {"outcome": "approved", "updated_at": {"$gte": week_ago}}) + approvals_7d,
+        "listings": {
+            "live": await lc(status="live"),
+            "flagged": await lc(status="flagged"),
+            "removed": await lc(status="removed"),
+            "sold": await lc(status="sold"),
+            "draft": await lc(status="draft"),
+            "total": await lc(),
+        },
+        "listing_activity_7d": await lc(created_at={"$gte": week_ago}),
+        "reports": {
+            "open": await rc(status="open"),
+            "reviewing": await rc(status="reviewing"),
+            "actioned": await rc(status="actioned"),
+            "dismissed": await rc(status="dismissed"),
+        },
+        "signups": {
+            "members_total": await uc(role="member"),
+            "members_7d": await db.users.count_documents({"role": "member", "created_at": {"$gte": week_ago}}),
+        },
+        "messages": {"threads": await db.message_threads.count_documents({})},
+    }
+
+
 @api.get("/")
 async def root():
     return {"service": "First Unit API", "status": "ok"}
-
 
 app.include_router(api)
 

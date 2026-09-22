@@ -3,8 +3,10 @@ import { useParams, Link } from "react-router-dom";
 import { AppNav } from "../components/AppNav";
 import { AvatarRing } from "../components/AvatarRing";
 import { VerifiedBadge } from "../components/VerifiedBadge";
+import { ReportDialog } from "../components/ReportDialog";
+import { useAuth } from "../context/AuthContext";
 import api from "../lib/api";
-import { ArrowLeft, EyeOff } from "lucide-react";
+import { ArrowLeft, EyeOff, Flag } from "lucide-react";
 
 const RESPONDER_LABELS = {
   law_enforcement: "Law Enforcement",
@@ -16,8 +18,10 @@ const RESPONDER_LABELS = {
 
 export default function MemberProfile() {
   const { userId } = useParams();
+  const { user } = useAuth();
   const [p, setP] = useState(null);
   const [notFound, setNotFound] = useState(false);
+  const [showReport, setShowReport] = useState(false);
 
   useEffect(() => {
     api.get(`/profiles/${userId}`).then((r) => setP(r.data)).catch(() => setNotFound(true));
@@ -80,9 +84,24 @@ export default function MemberProfile() {
               Real name and credential references are part of this member's private verified identity
               and are never shown — even here.
             </div>
+
+            {user?.id !== p.user_id && (
+              <button className="listing-report-link" onClick={() => setShowReport(true)} data-testid="report-user-btn" style={{ marginTop: 14 }}>
+                <Flag size={12} /> Report this member
+              </button>
+            )}
           </div>
         )}
       </div>
+      {p && (
+        <ReportDialog
+          open={showReport}
+          onClose={() => setShowReport(false)}
+          targetType="user"
+          targetId={p.user_id}
+          title="Report this member"
+        />
+      )}
     </div>
   );
 }

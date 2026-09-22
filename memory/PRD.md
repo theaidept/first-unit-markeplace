@@ -126,4 +126,18 @@ First Unit is a mobile-first, **verified-only marketplace WEBSITE** (standard re
 ## Next Tasks
 - Await user acceptance of Phase 9; then Jobs board or real-provider credentials.
 
+## Implemented (2026-09-22) — Phase 10 Department Job Board + marketing polish
+- **Department Job Board** sidebar panel on the marketplace dashboard (`JobBoard.jsx` in a new `feed-layout` = feed-main + sticky aside; stacks on mobile). Shows seeded postings with title, department, location, recency tag. `GET /api/jobs` (verified-only). 5 seeded postings via `seed_jobs()`.
+- **Admin job management** (new "Job Board" tab in the consolidated console): create/edit(inline)/remove postings. `GET/POST/PUT/DELETE /api/admin/jobs` — admin-only, each action audited (job_create/job_update/job_delete). No department self-service (as scoped).
+- **JobPosting** entity: department, title, location, posted_at, active. Admin console now has 5 tabs: Overview / Verification / Moderation / Monetization / Job Board.
+- **Marketing/landing** confirmed complete + mobile-first (no horizontal overflow at 390px): verification explainer (4 steps), feature sections (verified-only, video listings, featured stories, undercover privacy, department job board, safe exchange), categories, and clear join CTAs.
+- Tested: 100% backend (8/8) + 100% frontend (iteration_13), zero issues.
+
+## Backlog (prioritized)
+- **P1:** Real ID.me sandbox creds + callback validation; real Twilio SMS creds + delivery (SMS mocked).
+- **P2:** Activate a real listing fee (bills through existing Stripe layer); moderation enhancements (report detail drawer, member report history); optional dedicated /jobs view; refactor server.py (~2600 lines) into router modules.
+
+## Next Tasks
+- All core phases (1–10) complete. Await user acceptance; likely next: wire real ID.me/Twilio credentials, or go-live/deploy.
+
 ## Historical backlog (pre-Phase 7)

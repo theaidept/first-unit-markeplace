@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { AppNav } from "../components/AppNav";
 import { ListingCard } from "../components/ListingCard";
 import { StoryViewer } from "../components/StoryViewer";
+import { JobBoard } from "../components/JobBoard";
 import { AvatarRing } from "../components/AvatarRing";
 import api, { fileUrl } from "../lib/api";
 import { Link } from "react-router-dom";
@@ -131,15 +132,22 @@ export default function Marketplace() {
 
         {listings === null ? (
           <div style={{ padding: 40, color: "var(--text-faint)" }}>Loading…</div>
-        ) : listings.length === 0 ? (
-          <div className="card" style={{ padding: 40, textAlign: "center", color: "var(--text-dim)", marginTop: 10 }} data-testid="feed-empty">
-            No listings here yet. Be the first to <Link to="/sell" style={{ color: "var(--red)", fontWeight: 700 }}>list an item</Link>.
-          </div>
         ) : (
-          <div className="listings-grid" data-testid="listings-grid">
-            {listings.map((l) => (
-              <ListingCard key={l.id} listing={l} />
-            ))}
+          <div className="feed-layout" data-testid="feed-layout">
+            <div className="feed-main">
+              {listings.length === 0 ? (
+                <div className="card" style={{ padding: 40, textAlign: "center", color: "var(--text-dim)", marginTop: 10 }} data-testid="feed-empty">
+                  No listings here yet. Be the first to <Link to="/sell" style={{ color: "var(--red)", fontWeight: 700 }}>list an item</Link>.
+                </div>
+              ) : (
+                <div className="listings-grid" data-testid="listings-grid">
+                  {listings.map((l) => (
+                    <ListingCard key={l.id} listing={l} />
+                  ))}
+                </div>
+              )}
+            </div>
+            <JobBoard />
           </div>
         )}
       </div>

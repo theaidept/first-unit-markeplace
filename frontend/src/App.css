@@ -1455,6 +1455,27 @@ table.log tr:last-child td {
 @media (max-width: 720px) { .listings-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 460px) { .listings-grid { grid-template-columns: 1fr; } }
 
+/* ---------- Feed + Job Board sidebar (Phase 10) ---------- */
+.feed-layout { display: flex; flex-direction: column; gap: 20px; }
+.feed-main { min-width: 0; flex: 1; }
+.feed-main .listings-grid { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+.job-board { padding: 16px; align-self: flex-start; }
+.jb-head { display: flex; align-items: center; gap: 8px; font-family: "Oswald", sans-serif; text-transform: uppercase; letter-spacing: .06em; font-size: 14px; color: var(--navy); font-weight: 700; }
+.jb-sub { font-size: 12px; color: var(--text-faint); margin: 6px 0 12px; }
+.jb-empty { font-size: 13px; color: var(--text-faint); padding: 8px 0; }
+.jb-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.jb-item { padding: 12px 0; border-top: 1px solid var(--hairline); }
+.jb-item:first-child { border-top: none; padding-top: 0; }
+.jb-title { font-weight: 700; color: var(--navy); font-size: 13.5px; line-height: 1.3; }
+.jb-dept { font-size: 12.5px; color: var(--text-dim); margin-top: 2px; }
+.jb-meta { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 5px; font-size: 11.5px; color: var(--text-faint); }
+.jb-recency { flex: none; background: #f4f7fc; color: var(--navy); padding: 2px 7px; border-radius: 999px; font-weight: 600; }
+@media (min-width: 900px) {
+    .feed-layout { flex-direction: row; align-items: flex-start; }
+    .job-board { position: sticky; top: 84px; width: 288px; flex: none; }
+}
+
+
 .listing-card {
     display: block;
     text-decoration: none;

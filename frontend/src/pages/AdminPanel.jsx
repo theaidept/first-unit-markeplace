@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { AppNav } from "../components/AppNav";
 import api, { fileUrl, formatApiErrorDetail } from "../lib/api";
 import { toast } from "sonner";
-import { ShieldQuestion, LayoutDashboard, BadgeCheck, Flag, DollarSign, Users, Package, AlertOctagon, TrendingUp } from "lucide-react";
+import { ShieldQuestion, LayoutDashboard, BadgeCheck, Flag, DollarSign, Users, Package, AlertOctagon, TrendingUp, Briefcase } from "lucide-react";
 
 const STATUSES = ["unverified", "pre_screen", "validating", "human_review", "approved", "rejected", "suspended"];
 const RESPONDER_LABELS = {
@@ -17,6 +17,7 @@ const TABS = [
   { key: "verification", label: "Verification", icon: BadgeCheck },
   { key: "moderation", label: "Moderation", icon: Flag },
   { key: "monetization", label: "Monetization", icon: DollarSign },
+  { key: "jobs", label: "Job Board", icon: Briefcase },
 ];
 
 export default function AdminPanel() {
@@ -32,11 +33,15 @@ export default function AdminPanel() {
   const [health, setHealth] = useState(null);
   const [reports, setReports] = useState([]);
   const [modListings, setModListings] = useState([]);
+  const [jobs, setJobs] = useState([]);
+  const [jobDraft, setJobDraft] = useState({ department: "", title: "", location: "" });
+  const [editJob, setEditJob] = useState(null);
 
   // ---- loaders ----
   const loadHealth = async () => { try { const { data } = await api.get("/admin/health"); setHealth(data); } catch { /* ignore */ } };
   const loadReports = async () => { try { const { data } = await api.get("/admin/reports"); setReports(data.reports); } catch { /* ignore */ } };
   const loadModListings = async () => { try { const { data } = await api.get("/admin/listings"); setModListings(data.listings); } catch { /* ignore */ } };
+  const loadJobs = async () => { try { const { data } = await api.get("/admin/jobs"); setJobs(data.jobs); } catch { /* ignore */ } };
   const loadBoosts = async () => {
     try { const { data } = await api.get("/admin/boost-types"); setBoosts(data.boost_types); setBoostFeature(data.feature_enabled); } catch { /* ignore */ }
   };
@@ -52,7 +57,7 @@ export default function AdminPanel() {
   };
 
   useEffect(() => {
-    load(); loadFee(); loadBoosts(); loadHealth(); loadReports(); loadModListings();
+    load(); loadFee(); loadBoosts(); loadHealth(); loadReports(); loadModListings(); loadJobs();
   }, []);
 
   const refreshTrust = () => { load(); loadHealth(); loadReports(); loadModListings(); };
@@ -124,6 +129,30 @@ export default function AdminPanel() {
   const patchBoost = (id, patch) => setBoosts((prev) => prev.map((b) => (b.id === id ? { ...b, ...patch } : b)));
   const quickToggle = async (b, patch) => { patchBoost(b.id, patch); await saveBoost({ ...b, ...patch }); };
   const deleteBoost = async (id) => { try { await api.delete(`/admin/boost-types/${id}`); toast.success("Boost tier removed"); loadBoosts(); } catch (err) { toast.error(formatApiErrorDetail(err.response?.data?.detail)); } };
+
+  // ---- jobs ----
+  const createJob = async () => {
+    if (!jobDraft.department.trim() || !jobDraft.title.trim() || !jobDraft.location.trim()) {
+      toast.error("Department, title and location are required"); return;
+    }
+    try {
+      await api.post("/admin/jobs", { ...jobDraft, active: true });
+      setJobDraft({ department: "", title: "", location: "" });
+      toast.success("Job posting created");
+      loadJobs(); loadHealth();
+    } catch (err) { toast.error(formatApiErrorDetail(err.response?.data?.detail)); }
+  };
+  const saveJob = async (j) => {
+    try {
+      await api.put(`/admin/jobs/${j.id}`, { department: j.department, title: j.title, location: j.location, active: j.active !== false });
+      toast.success("Job posting saved");
+      setEditJob(null); loadJobs();
+    } catch (err) { toast.error(formatApiErrorDetail(err.response?.data?.detail)); }
+  };
+  const deleteJob = async (id) => {
+    try { await api.delete(`/admin/jobs/${id}`); toast.success("Job posting removed"); loadJobs(); loadHealth(); }
+    catch (err) { toast.error(formatApiErrorDetail(err.response?.data?.detail)); }
+  };
 
   const H = health;
 
@@ -361,6 +390,58 @@ export default function AdminPanel() {
                 <label className="undercover-toggle" style={{ margin: 0, background: "transparent", border: "none", padding: "0 4px" }}><input type="checkbox" checked={draft.until_sold} onChange={(e) => setDraft({ ...draft, until_sold: e.target.checked })} data-testid="new-boost-untilsold" /><div><b>Until sold</b></div></label>
                 <button className="btn btn-primary" onClick={createBoost} data-testid="new-boost-create-btn">Create tier</button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ===================== JOB BOARD ===================== */}
+        {tab === "jobs" && (
+          <div data-testid="admin-jobs">
+            <div className="card" style={{ padding: 20, marginBottom: 14 }} data-testid="job-create-form">
+              <div className="sc-head">Post a department role</div>
+              <p style={{ fontSize: 12.5, color: "var(--text-faint)", margin: "0 0 14px" }}>
+                Admin-managed postings appear in every verified member's Department Job Board. No department self-service in this release.
+              </p>
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+                <div className="field" style={{ margin: 0, flex: "1 1 180px" }}><label>Department</label>
+                  <input value={jobDraft.department} onChange={(e) => setJobDraft({ ...jobDraft, department: e.target.value })} placeholder="e.g. Austin Fire Department" data-testid="new-job-department" /></div>
+                <div className="field" style={{ margin: 0, flex: "1 1 180px" }}><label>Title</label>
+                  <input value={jobDraft.title} onChange={(e) => setJobDraft({ ...jobDraft, title: e.target.value })} placeholder="e.g. Firefighter / EMT" data-testid="new-job-title" /></div>
+                <div className="field" style={{ margin: 0, flex: "1 1 160px" }}><label>Location</label>
+                  <input value={jobDraft.location} onChange={(e) => setJobDraft({ ...jobDraft, location: e.target.value })} placeholder="e.g. Austin, TX" data-testid="new-job-location" /></div>
+                <button className="btn btn-primary" onClick={createJob} data-testid="new-job-create-btn">Post role</button>
+              </div>
+            </div>
+
+            <div className="admin-head"><div><span className="eyebrow">Postings</span><h1>Job board</h1></div>
+              <span style={{ fontSize: 13, color: "var(--text-faint)" }}>{jobs.length} postings</span></div>
+            <div style={{ display: "grid", gap: 8 }} data-testid="admin-job-list">
+              {jobs.length === 0 && <div className="card" style={{ padding: 24, color: "var(--text-faint)" }}>No postings yet.</div>}
+              {jobs.map((j) => (
+                <div className="card" style={{ padding: 14, display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }} key={j.id} data-testid={`admin-job-${j.id}`}>
+                  {editJob?.id === j.id ? (
+                    <>
+                      <div className="field" style={{ margin: 0, flex: "1 1 160px" }}><label>Department</label>
+                        <input value={editJob.department} onChange={(e) => setEditJob({ ...editJob, department: e.target.value })} data-testid={`job-department-${j.id}`} /></div>
+                      <div className="field" style={{ margin: 0, flex: "1 1 160px" }}><label>Title</label>
+                        <input value={editJob.title} onChange={(e) => setEditJob({ ...editJob, title: e.target.value })} data-testid={`job-title-${j.id}`} /></div>
+                      <div className="field" style={{ margin: 0, flex: "1 1 140px" }}><label>Location</label>
+                        <input value={editJob.location} onChange={(e) => setEditJob({ ...editJob, location: e.target.value })} data-testid={`job-location-${j.id}`} /></div>
+                      <button className="btn btn-primary" onClick={() => saveJob(editJob)} data-testid={`job-save-${j.id}`}>Save</button>
+                      <button className="btn btn-ghost" onClick={() => setEditJob(null)} data-testid={`job-cancel-${j.id}`}>Cancel</button>
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, color: "var(--navy)", fontSize: 14 }}>{j.title}</div>
+                        <div style={{ fontSize: 12.5, color: "var(--text-dim)" }}>{j.department} · {j.location}</div>
+                      </div>
+                      <button className="btn btn-ghost" onClick={() => setEditJob({ ...j })} data-testid={`job-edit-${j.id}`}>Edit</button>
+                      <button className="btn btn-ghost" onClick={() => deleteJob(j.id)} data-testid={`job-delete-${j.id}`} style={{ color: "var(--red)" }}>Remove</button>
+                    </>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         )}

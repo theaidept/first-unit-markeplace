@@ -2424,6 +2424,71 @@ async def admin_health(admin: dict = Depends(require_admin)):
     }
 
 
+# ---------------------------------------------------------------------------
+# Phase 10 — Department Job Board. Admin-managed postings; visible to verified
+# members (constraint 1). No department self-service posting in this release.
+# ---------------------------------------------------------------------------
+class JobBody(BaseModel):
+    department: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    location: str = Field(min_length=1)
+    active: bool = True
+
+
+def job_public(j: dict) -> dict:
+    return {
+        "id": j["id"], "department": j["department"], "title": j["title"],
+        "location": j["location"], "posted_at": j.get("posted_at"),
+        "active": j.get("active", True),
+    }
+
+
+@api.get("/jobs")
+async def list_jobs(user: dict = Depends(require_verified)):
+    docs = await db.job_postings.find({"active": True}, {"_id": 0}).sort("posted_at", -1).to_list(50)
+    return {"jobs": [job_public(j) for j in docs]}
+
+
+@api.get("/admin/jobs")
+async def admin_list_jobs(admin: dict = Depends(require_admin)):
+    docs = await db.job_postings.find({}, {"_id": 0}).sort("posted_at", -1).to_list(500)
+    return {"jobs": [job_public(j) for j in docs]}
+
+
+@api.post("/admin/jobs")
+async def admin_create_job(body: JobBody, admin: dict = Depends(require_admin)):
+    doc = {
+        "id": str(uuid.uuid4()), "department": body.department.strip(), "title": body.title.strip(),
+        "location": body.location.strip(), "active": body.active,
+        "posted_at": now_iso(), "created_at": now_iso(), "updated_at": now_iso(),
+    }
+    await db.job_postings.insert_one(doc)
+    await audit(admin, "job_create", "job", doc["id"], {"title": doc["title"]})
+    return job_public(doc)
+
+
+@api.put("/admin/jobs/{job_id}")
+async def admin_update_job(job_id: str, body: JobBody, admin: dict = Depends(require_admin)):
+    j = await db.job_postings.find_one({"id": job_id})
+    if not j:
+        raise HTTPException(status_code=404, detail="Job posting not found")
+    updates = {"department": body.department.strip(), "title": body.title.strip(),
+               "location": body.location.strip(), "active": body.active, "updated_at": now_iso()}
+    await db.job_postings.update_one({"id": job_id}, {"$set": updates})
+    j.update(updates)
+    await audit(admin, "job_update", "job", job_id, {"title": updates["title"]})
+    return job_public(j)
+
+
+@api.delete("/admin/jobs/{job_id}")
+async def admin_delete_job(job_id: str, admin: dict = Depends(require_admin)):
+    res = await db.job_postings.delete_one({"id": job_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Job posting not found")
+    await audit(admin, "job_delete", "job", job_id, {})
+    return {"status": "ok"}
+
+
 @api.get("/")
 async def root():
     return {"service": "First Unit API", "status": "ok"}
@@ -2495,6 +2560,23 @@ async def seed_boosts():
                                {"$setOnInsert": {"enabled": True, "created_at": now_iso()}}, upsert=True)
 
 
+async def seed_jobs():
+    if await db.job_postings.count_documents({}) == 0:
+        defaults = [
+            ("Austin Fire Department", "Firefighter / EMT", "Austin, TX"),
+            ("Round Rock PD", "Patrol Officer", "Round Rock, TX"),
+            ("Travis County EMS", "Paramedic", "Travis County, TX"),
+            ("Central Dispatch", "911 Dispatcher", "Austin, TX"),
+            ("County Fire Rescue", "Driver / Engineer", "Williamson County, TX"),
+        ]
+        for i, (dept, title, loc) in enumerate(defaults):
+            ts = (datetime.now(timezone.utc) - timedelta(days=i)).isoformat()
+            await db.job_postings.insert_one({
+                "id": str(uuid.uuid4()), "department": dept, "title": title, "location": loc,
+                "active": True, "posted_at": ts, "created_at": ts, "updated_at": ts,
+            })
+
+
 @app.on_event("startup")
 async def startup():
     await db.users.create_index("email", unique=True)
@@ -2510,6 +2592,7 @@ async def startup():
     await seed_admins()
     await seed_categories()
     await seed_boosts()
+    await seed_jobs()
     try:
         await asyncio.to_thread(init_storage)
         logger.info("Object storage initialized")

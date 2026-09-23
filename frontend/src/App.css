@@ -2307,6 +2307,9 @@ table.log tr:last-child td {
 
 /* ===================== Marketplace Home + Dashboard (rebuild) ===================== */
 .market-home .wrap, .dash .wrap { max-width: 1360px; }
+/* Unified full-width shell: every page that renders the MarketHeader spans edge-to-edge. */
+.fu-app:has(.mh) .wrap { max-width: 100%; }
+.fu-app:has(.mh) .market-body { max-width: 100%; }
 
 /* Market header */
 .mh { position: sticky; top: 0; z-index: 60; background: #fff; box-shadow: 0 1px 0 rgba(11,20,34,.12); }

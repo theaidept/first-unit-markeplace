@@ -33,7 +33,7 @@ export default function Register() {
 
   return (
     <div className="auth-shell" data-testid="register-page">
-      <div className="auth-side" style={{ backgroundImage: `url(${IMG.verifySide})` }}>
+      <div className="auth-side" style={{ backgroundImage: `linear-gradient(155deg, rgba(11,31,66,.74), rgba(13,20,36,.9)), url(${IMG.verifySide})`, backgroundSize: "cover", backgroundPosition: "center" }}>
         <Brand light />
         <div>
           <h2>You wear the badge. First Unit checks the badge.</h2>

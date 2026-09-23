@@ -6,6 +6,7 @@ import { VerifiedBadge } from "../components/VerifiedBadge";
 import { CATEGORY_LABELS } from "../components/ListingCard";
 import { ReportDialog } from "../components/ReportDialog";
 import api, { fileUrl, formatApiErrorDetail } from "../lib/api";
+import { PLACEHOLDER_IMG, imgFallback } from "../lib/assets";
 import { toast } from "sonner";
 import { MessageSquare, MapPin, ShoppingBag, Tag, ShieldCheck, Flag } from "lucide-react";
 
@@ -152,17 +153,18 @@ export default function ListingDetail() {
           <div>
             {l.video && (
               <video src={fileUrl(l.video)} controls playsInline className="detail-video"
-                data-testid="detail-video" poster={photos[0] ? fileUrl(photos[0]) : undefined} />
+                data-testid="detail-video" poster={photos[0] ? fileUrl(photos[0]) : undefined}
+                onError={(e) => { e.currentTarget.poster = PLACEHOLDER_IMG; }} />
             )}
             <div className="gallery-main">
-              {photos[active] ? <img src={fileUrl(photos[active])} alt={l.title} /> : <div className="lc-noimg">No photo</div>}
+              {photos[active] ? <img src={fileUrl(photos[active])} alt={l.title} onError={imgFallback} /> : <div className="lc-noimg">No photo</div>}
               <span className="lc-cat">{CATEGORY_LABELS[l.category] || l.category}</span>
             </div>
             {photos.length > 1 && (
               <div className="gallery-thumbs">
                 {photos.map((p, i) => (
                   <button key={p} className={`gt ${i === active ? "on" : ""}`} onClick={() => setActive(i)} data-testid={`thumb-${i}`}>
-                    <img src={fileUrl(p)} alt="" />
+                    <img src={fileUrl(p)} alt="" onError={imgFallback} />
                   </button>
                 ))}
               </div>

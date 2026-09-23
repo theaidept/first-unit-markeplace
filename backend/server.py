@@ -1275,6 +1275,7 @@ async def feed(user: dict = Depends(require_verified),
                q: Optional[str] = Query(None), category: Optional[str] = Query(None),
                featured: Optional[bool] = Query(None), has_video: Optional[bool] = Query(None)):
     query = {"status": "live"}
+    query["title"] = {"$not": {"$regex": "^test_", "$options": "i"}}
     if category and category != "all":
         query["category"] = category
     if has_video:
@@ -1633,6 +1634,8 @@ async def get_stories(user: dict = Depends(require_verified)):
     for s in stories:
         listing = await db.listings.find_one({"id": s["listing_id"]}, {"_id": 0})
         if not listing or listing.get("status") != "live" or not listing.get("video"):
+            continue
+        if re.match("^test_", listing.get("title", ""), re.I):
             continue
         resolved.append((s, listing))
     # Boosted listings get priority placement in the Featured Stories reel.

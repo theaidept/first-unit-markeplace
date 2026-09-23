@@ -19,7 +19,7 @@ export const IMG = {  heroGroup:
   heroGear:
     "https://static.prod-images.emergentagent.com/jobs/77f9cf0f-d6ac-4fc8-9cd5-77c8080c4b26/images/effc81ad2767a7db46a16a22d9aab36e5ca2835bb653c506af955fd9e3d64d91.jpeg",
   verifySide:
-    "https://static.prod-images.emergentagent.com/jobs/77f9cf0f-d6ac-4fc8-9cd5-77c8080c4b26/images/1e4b6be6b946666c54fd549a548ece07964fcba462d0a285dd3b292e08dc794f.jpeg",
+    "https://images.pexels.com/photos/19487947/pexels-photo-19487947.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=1200&w=900",
 };
 
 // Shoppable-story thumbnails (institutional product shots, unified by a navy overlay in CSS).

@@ -5,7 +5,7 @@ import { AvatarRing } from "./AvatarRing";
 import { VerifiedBadge } from "./VerifiedBadge";
 import api from "../lib/api";
 import logo from "../assets/logo.png";
-import { Search, ShoppingBag, MessageSquare, Bell, LayoutDashboard, ShieldCheck } from "lucide-react";
+import { Search, ShoppingBag, MessageSquare, Bell, LayoutDashboard, ShieldCheck, LogOut } from "lucide-react";
 
 const CATS = [
   { key: "all", label: "All Categories" },
@@ -27,7 +27,7 @@ const NAV = [
 ];
 
 export const MarketHeader = ({ onSearch, onNav, activeNav, showNav = true }) => {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
@@ -99,6 +99,7 @@ export const MarketHeader = ({ onSearch, onNav, activeNav, showNav = true }) => 
               <span className="mh-chip-name">{me?.display_handle || user?.email?.split("@")[0]}</span>
               {(me?.verified_badge ?? user?.verification_status === "approved") && <VerifiedBadge />}
             </Link>
+            <button className="mh-icon" title="Log out" data-testid="mh-logout" onClick={async () => { await logout(); navigate("/"); }}><LogOut size={18} /></button>
           </div>
         </div>
       </div>

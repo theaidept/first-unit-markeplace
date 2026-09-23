@@ -29,7 +29,7 @@ export default function Login() {
 
   return (
     <div className="auth-shell" data-testid="login-page">
-      <div className="auth-side" style={{ backgroundImage: `url(${IMG.verifySide})` }}>
+      <div className="auth-side" style={{ backgroundImage: `linear-gradient(155deg, rgba(11,31,66,.74), rgba(13,20,36,.9)), url(${IMG.verifySide})`, backgroundSize: "cover", backgroundPosition: "center" }}>
         <Brand light />
         <div>
           <h2>Welcome back to the unit.</h2>

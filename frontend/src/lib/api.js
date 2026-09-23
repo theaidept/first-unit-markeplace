@@ -3,7 +3,7 @@ import axios from "axios";
 const BASE = process.env.REACT_APP_BACKEND_URL;
 
 export const BACKEND = BASE;
-export const fileUrl = (p) => (p ? `${BASE}${p}` : null);
+export const fileUrl = (p) => (!p ? null : /^https?:\/\//.test(p) ? p : `${BASE}${p}`);
 
 const api = axios.create({
   baseURL: `${BASE}/api`,

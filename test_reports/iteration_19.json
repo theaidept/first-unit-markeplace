@@ -1,0 +1,98 @@
+{
+  "summary": "Frontend-only UI polish pass validated end-to-end for First Unit. All 8 acceptance criteria verified as PASS: buyer2 login, marketplace stories/cat-tiles/cards, header profile dropdown, persistent shell across /dashboard, /transactions, /messages, /members, /profile, /members/:id, members directory (6 real members, no TEST_), listing detail (rating+condition+buy+offer+message), and verification page layout for an unverified new user.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Marketplace 'Shop by Category'", "issues": ["Jobs tile still renders a text placeholder instead of an image (intentional per code but inconsistent visual with the other 3 image tiles). Consider adding a real image for parity — carried over from iteration_18."]}
+    ]
+  },
+  "verified_flows": {
+    "login": {"credentials": "buyer2@example.com / BuyerPass#2026", "post_login_url": "/marketplace", "result": "PASS"},
+    "marketplace": {
+      "market_header": true,
+      "stories_reel_present": true,
+      "story_cards": 5,
+      "cat_tiles": {"total": 4, "with_real_image": 3, "text_placeholder": ["Jobs"]},
+      "listing_cards": 20,
+      "sample_card_content": "FEATURED | Gear & Equipment | $240 | Turnout Gear — Size L | 4.2 | (20 reviews) | Engine 14 | Verified — all cards show image + star rating (X.Y) + (N reviews) + verified seller + avatar"
+    },
+    "profile_dropdown": {
+      "chip_testid": "mh-profile-chip",
+      "menu_testid": "mh-profile-menu",
+      "items": [
+        {"tid": "mh-menu-profile", "href": "/profile"},
+        {"tid": "mh-menu-listings", "href": "/dashboard"},
+        {"tid": "mh-menu-orders", "href": "/transactions"},
+        {"tid": "mh-menu-verification", "href": "/verification"},
+        {"tid": "mh-menu-signout", "href": null}
+      ],
+      "result": "PASS — all 5 items present with correct testids and hrefs"
+    },
+    "persistent_shell": {
+      "/dashboard": {"header": true, "sidebar": true},
+      "/transactions": {"header": true, "sidebar": true},
+      "/messages": {"header": true, "sidebar": true},
+      "/members": {"header": true, "sidebar": true},
+      "/members/:id": {"header": true, "sidebar": true},
+      "/profile": {"header": true, "sidebar": true},
+      "/verification (buyer2 verified user)": "Redirected to /marketplace as expected — verified users cannot access /verification; retested with newly-registered unverified user (see below).",
+      "/marketplace": {"header": true, "sidebar": false, "note": "Marketplace is NOT in the shell scope per spec — expected"}
+    },
+    "sidebar_links": [
+      "dash-nav-marketplace → /marketplace",
+      "dash-nav-listings → /dashboard",
+      "dash-nav-orders → /transactions",
+      "dash-nav-messages → /messages",
+      "dash-nav-saved → /dashboard?view=saved",
+      "dash-nav-members → /members",
+      "dash-nav-jobs → /dashboard?view=jobs",
+      "dash-nav-verification → /verification",
+      "dash-nav-profile → /profile",
+      "dash-mini-profile (bottom user chip)"
+    ],
+    "members_directory": {
+      "count": 6,
+      "names": ["RETIRED 22YR", "DISPATCH 4", "AUSTIN PD", "STATION 9 EMS", "ENGINE 14", "PD UNIT 22"],
+      "all_verified": true,
+      "all_have_real_photos": true,
+      "test_accounts_leaked": 0,
+      "test_regex_matches_on_page": 0
+    },
+    "member_profile": {"url": "/members/1a0d391c-...", "header": true, "sidebar": true, "result": "PASS"},
+    "listing_detail": {
+      "url_sample": "/listing/b3fd2a33-743b-4643-a104-362d87078c5f",
+      "detail_rating_testid_present": true,
+      "rating_text": "4.2\\n(20 reviews)",
+      "labeled_condition_field": true,
+      "buy_now": true,
+      "make_offer": true,
+      "message_seller": true,
+      "images_rendered": 3
+    },
+    "verification_page_unverified_user": {
+      "registered_email": "uitest{ts}@example.com",
+      "post_register_redirect": "/verification",
+      "verify_side_width_px": 360,
+      "verify_main_width_px": 1080,
+      "viewport_px": 1440,
+      "step_list_readable_over_darkened_bg": true,
+      "main_is_full_width_not_narrow_column": true,
+      "result": "PASS"
+    }
+  },
+  "test_report_links": [".screenshots/marketplace_test.png", ".screenshots/members.png", ".screenshots/verification.png"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Minor: 'Jobs' cat-tile is a text-only placeholder while other 3 tiles use real photos — visual inconsistency (carry-over from iter_18).",
+    "The /verification route silently redirects already-verified users to /marketplace. Consider showing a friendly 'You are already verified' page or a toast to avoid ambiguity when a verified user clicks the sidebar Verification link."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100% — all 8 acceptance criteria verified"},
+  "test_credentials": "buyer2@example.com / BuyerPass#2026 (verified). Newly-registered UI-test user used the fresh email uitest{unix-ts}@example.com / UiTest#2026xyz for verification-page test.",
+  "seed_data_creation": "Registered one throwaway unverified user during testing (uitest{ts}@example.com). Consider periodic cleanup.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All UI polish acceptance criteria are green: persistent DashboardLayout wraps /dashboard, /transactions, /messages, /members, /members/:id, /profile, /verification (for unverified users). /marketplace intentionally shows header only. Profile dropdown testids stable: mh-profile-chip/mh-profile-menu/mh-menu-*. Sidebar testids: dash-sidebar + dash-nav-*. Members grid uses data-testid=profile-card-{Name}. Listing detail exposes data-testid=detail-rating. Videos were not asserted per headless-codec note. No TEST_ accounts leak to /members."
+}

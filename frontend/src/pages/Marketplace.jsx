@@ -17,6 +17,7 @@ const PROMOS = [
   { t: "Department Job Board", s: "Agencies post open roles right alongside the marketplace.", cta: "Browse roles", to: "/dashboard?view=jobs" },
 ];
 const isTest = (l) => /^test_/i.test(l.title || "");
+const JOBS_IMG = "https://images.pexels.com/photos/34136293/pexels-photo-34136293.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940";
 
 export default function Marketplace() {
   const [params] = useSearchParams();
@@ -173,7 +174,7 @@ export default function Marketplace() {
                   </button>
                 ))}
                 <Link to="/dashboard?view=jobs" className="cat-tile" data-testid="cat-tile-jobs">
-                  <span className="ct-img"><span className="ct-ph">Jobs</span></span>
+                  <span className="ct-img"><img src={JOBS_IMG} alt="Department Jobs" onError={imgFallback} /></span>
                   <span className="ct-label">Department Jobs</span>
                   <span className="ct-count">Open roles</span>
                 </Link>

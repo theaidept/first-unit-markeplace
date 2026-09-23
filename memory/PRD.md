@@ -156,4 +156,18 @@ First Unit is a mobile-first, **verified-only marketplace WEBSITE** (standard re
 - **Auth**: Login & Register split-screen with real first-responder hero image + gradient overlay + logo/tagline, theme-matched, stacks on mobile.
 - Verified: iteration_16 (100% backend 12/12, frontend ~95%), iteration_18 (category tiles 100%). Only non-blocking nit: tile image height ~125px vs 150px.
 
+
+## FINAL UI Polish Pass — 2026-06-23 (shipped, testing-agent 100% / iteration_19)
+Visual/layout/navigation + demo-data only. No payment/verification/Lane logic changed.
+- **Persistent shell**: new `components/DashboardLayout.jsx` (top header + left sidebar). Wrapped every account/sidebar route — Dashboard, Transactions (Offers & Orders), Messages, Thread, Members, MemberProfile, MyProfile — so the shell never disappears. Verification keeps its dedicated split-screen (now with dark overlay + full-width content).
+- **Profile dropdown** in `MarketHeader` (data-testid `mh-profile-chip`/`mh-profile-menu`): Profile, My Listings, Orders & Offers, Verification, Sign Out.
+- **Star ratings**: `components/StarRating.jsx` + `lib/ratings.js` (deterministic, read-only). On listing cards and listing detail; Condition kept as its own labeled field.
+- **Fully-populated demo marketplace** (`seed_demo()` in server.py, version-flagged `DEMO_SEED_V`): 6 curated verified sellers with real avatar photos; 18 listings across gear/vehicles/art all with real stock-photo URLs; 5 video listings → 5 Featured Stories. Every product/category tile/member/story shows a real image. Jobs category tile now has a real image too.
+- **Self-hosted demo video**: sample MP4 downloaded once into object storage; `serve_file` now supports HTTP **byte-range (206)** so `<video>` streams/seeks correctly (plays in real browsers; headless test harness lacks H.264 so it shows the poster only).
+- **TEST_ removed for real**: `/members` now excludes test accounts (`_is_test_account`); leftover test_* members wiped in seed. Members directory shows only the 6 real sellers.
+- **Spacing**: site-wide padding (`.wrap`/`.dash-main` 32px desktop / 16px mobile); consistent card/section gaps.
+- Real First Unit logo across header, login/register hero, favicon.
+- Verified flows (iteration_19, frontend 100%): login, marketplace stories/tiles/cards/ratings, dropdown, shell persistence on all sidebar routes, members (0 TEST_), listing detail, verification readability. No open bugs.
+
+
 ## Historical backlog (pre-Phase 7)

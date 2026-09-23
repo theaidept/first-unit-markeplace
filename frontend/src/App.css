@@ -2366,7 +2366,7 @@ table.log tr:last-child td {
 .see-all { background: none; border: none; color: var(--red); font-weight: 700; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 2px; }
 
 .cat-tiles { display: grid; grid-template-columns: repeat(7, 1fr); gap: 14px; }
-.cat-tile { background: none; border: none; cursor: pointer; text-align: center; text-decoration: none; }
+.cat-tile { display: flex; flex-direction: column; width: 100%; background: none; border: none; cursor: pointer; text-align: center; text-decoration: none; padding: 0; }
 .ct-img { display: flex; align-items: center; justify-content: center; width: 100%; height: 150px; border-radius: 2px; overflow: hidden; background: linear-gradient(135deg, var(--navy-2,#16305c), var(--navy-3,#0d1424)); border: 1px solid var(--hairline); }
 .ct-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .ct-ph { color: var(--gold-l,#c9a24a); font-family: "Oswald",sans-serif; font-size: 12px; letter-spacing: 1px; }

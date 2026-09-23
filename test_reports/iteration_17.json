@@ -1,0 +1,31 @@
+{
+  "summary": "Focused re-test of the iteration_16 MEDIUM CSS bug — Marketplace 'Shop by Category' tile hero images. RESULT: Bug is NOT fixed. Images still render as narrow vertical strips (~19–32px wide × 150px tall) instead of filling the ~170px-wide tile. Height (150px) is now correct, but width:100% on .ct-img is not being honored because the parent .cat-tile is a <button> element (buttons apply a special inline shrink-to-fit content flow that ignores width:100% on child spans, even when those spans are display:flex). Regression checks all pass: stories-reel present, curated shelves render 20+ real listing card images, horizontal overflow = 0px at 1440x900, no console errors.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Marketplace 'Shop by Category' tiles",
+        "issue": "Category tile hero images still collapsed to narrow vertical strips. Measured .ct-img bounding boxes at 1440x900 (logged in as owner): cat-tile-gear w=19.28px h=150px; cat-tile-vehicles w=32.28px h=150px; cat-tile-art w=30.28px h=150px; cat-tile-jobs w=21.30px h=150px. Expected width ~170px (full tile width). Labels appear beside the strip rather than below because the button's inline flow layout is not being broken by the current CSS. The width:100% + height:150px fix on .ct-img is insufficient — <button> element does not treat width:100% child spans the same way a <div> would. .cat-tile itself has no display/width set (App.css line 2369), so its inline-flex/inline-block children shrink to content width.",
+        "selector": "[data-testid='cat-tiles'] [data-testid^='cat-tile-'] .ct-img",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "In /app/frontend/src/App.css around line 2369, update .cat-tile to be a proper block flex column so its span children can fill width. Recommended patch: `.cat-tile { background:none; border:none; cursor:pointer; text-align:center; text-decoration:none; display:flex; flex-direction:column; align-items:stretch; width:100%; padding:0; }`  — This forces the <button> out of its default inline shrink-to-fit content flow. Keep the existing .ct-img rule (width:100%; height:150px; display:flex; ...). After this, .ct-img will render at full tile width (~170px) and the label/count will stack below the hero image, matching the intended design."
+  ],
+  "critical_code_review_comments": [
+    "Using <button> for cat-tile causes CSS layout surprises; consider either (a) forcing display:flex/flex-direction:column on the button, or (b) refactoring to a <div role='button'> wrapping the content. The <button> approach also implicitly makes the whole tile a form-submit target which can cause unintended submits inside forms.",
+    "The .ct-img fallback background gradient works, but .ct-ph is absolutely inline-sized (~20px) so the Jobs tile placeholder text 'Jobs' is barely visible inside the collapsed strip too — will be resolved by the same fix."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A", "frontend": "0% for the single bug under retest; regression checks 100% pass"},
+  "seed_data_creation": "None",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Only one bug to verify: category tile hero image size. Login owner theaidept@gmail.com / FirstUnit#Owner2026!, go to /marketplace, measure bounding box of [data-testid^='cat-tile-'] .ct-img — expect width ~150–200px (full tile), height ~150px. Previous fix was insufficient because parent .cat-tile is a <button>; main agent needs to add display:flex; flex-direction:column; width:100% to .cat-tile. Regression items (stories-reel, curated shelves images, no horizontal overflow at 1440x900) already verified passing this iteration.",
+  "rca of the issue": "The iteration_16 fix added `width:100%; height:150px` to .ct-img (a <span>) inside .cat-tile (a <button>). HTML <button> elements have a special user-agent layout: their content area is treated as an inline shrink-to-fit container, which prevents child spans from expanding to width:100% of the button's grid-column allocation. Result: .ct-img shrinks to intrinsic content width (the tiny <img> inside), producing ~20–30px wide × 150px tall strips instead of a 170×150 hero. Fix: make .cat-tile itself a display:flex flex-direction:column width:100% container so its children lay out as block-level rows filling full width."
+}

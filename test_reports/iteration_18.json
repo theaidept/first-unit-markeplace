@@ -1,0 +1,39 @@
+{
+  "summary": "Focused re-test of Marketplace 'Shop by Category' tile image CSS fix (iteration_17 previously failed at ~20px). Fix VERIFIED: .cat-tile now display:flex column width:100% and .ct-img fills the tile width. Measured all 4 tiles at 1440x900 as logged-in owner.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Marketplace 'Shop by Category'", "issues": ["ct-img rendered height is 125px, but CSS declares height:150px. Likely because .cat-tile has fixed height 168px (line 2195 in App.css) and label+count below squeeze the image to 125px. Not a blocker (width fills correctly, images cover), but height is less than the 150px specified in the request. Consider removing the fixed 168px .cat-tile height or increasing it to ~200px so ct-img can be full 150px."]}
+    ]
+  },
+  "measurements": {
+    "cat-tile-gear": {"tile_w": 156.28, "tile_h": 168, "ct-img_w": 156.28, "ct-img_h": 125, "inner_img_w": 154.28},
+    "cat-tile-vehicles": {"tile_w": 156.28, "tile_h": 168, "ct-img_w": 156.28, "ct-img_h": 125, "inner_img_w": 154.28},
+    "cat-tile-art": {"tile_w": 156.28, "tile_h": 168, "ct-img_w": 156.28, "ct-img_h": 125, "inner_img_w": 154.28},
+    "cat-tile-jobs": {"tile_w": 156.28, "tile_h": 168, "ct-img_w": 156.30, "ct-img_h": 125, "note": "No inner <img>; renders text placeholder 'Jobs' inside .ct-img (intentional per code)"}
+  },
+  "regression_checks": {
+    "stories-reel_present": true,
+    "listing_cards_rendered": 20,
+    "horizontal_overflow_1440x900": false,
+    "scrollWidth_vs_clientWidth": "1440 == 1440"
+  },
+  "test_report_links": [".screenshots/marketplace.png"],
+  "action_items": [
+    "OPTIONAL/MINOR: The rendered .ct-img height is 125px (not 150px). The fixed .cat-tile height:168px (App.css line 2195) constrains the image. If the exact 150px height is required, either remove line 2195 or raise it to ~200px so image can reach 150px + label + count below."
+  ],
+  "critical_code_review_comments": [
+    "App.css has duplicate .cat-tile blocks (lines 537, 1122, 2195, 2369). Consolidate to a single canonical block to avoid future width/height regressions.",
+    "cat-tile-jobs falls back to a text placeholder 'Jobs' instead of an image; consider adding a real image or a nicer icon for visual parity."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a", "frontend": "100% for core bug fix; minor height discrepancy noted"},
+  "test_credentials": "Owner: theaidept@gmail.com / FirstUnit#Owner2026! (worked, httpOnly cookie flow)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Category-tile CSS bug (~20px narrow strip) is fully resolved. Tiles are 156px wide and .ct-img fills the tile width. Only cosmetic remaining item is ct-img height (125px vs 150px spec) caused by fixed .cat-tile height:168px in App.css line 2195. Featured Stories rail + ListingCards render fine, no horizontal overflow at 1440x900.",
+  "rca of the issue": "Previous root cause: .cat-tile was a shrink-wrapping <button> so width:100% on .ct-img resolved to content width (~20px). Fix in App.css line 2369 sets .cat-tile { display:flex; flex-direction:column; width:100%; padding:0 } making it fill its grid column, so .ct-img width:100% now resolves to ~156px within the 4-column grid at 1440px viewport. Confirmed by bounding-box measurements."
+}

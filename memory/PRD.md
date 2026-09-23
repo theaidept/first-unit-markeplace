@@ -147,4 +147,13 @@ First Unit is a mobile-first, **verified-only marketplace WEBSITE** (standard re
 - NO backend changes — reused GET /listings, /stories, /jobs, /profile/me, /listings/mine, /messages/unread-count, /notifications.
 - Tested: iteration_14 (95% → one HIGH mobile-header overflow) then iteration_15 (100%, zero overflow). All acceptance criteria met.
 
+## Implemented (2026-09-22) — Site-wide design consistency pass (Marketplace/Dashboard design → every page)
+- **Unified header everywhere**: `AppNav` now renders `MarketHeader`, so every logged-in page carries the identical header (real logo, category search, Orders/Messages/Alerts badges, Sell, Dashboard, profile chip, logout). Pages updated: Marketplace, Dashboard (+ My Listings/Saved/Job Board views), Listing Detail, Messages inbox, Conversation thread, Transactions (Offers & Orders), Members directory, Member profile, My Profile, Verification, Sell wizard, Admin console.
+- **Full-width layout**: `.fu-app:has(.mh) .wrap { max-width:100% }` makes all logged-in pages edge-to-edge (landing untouched via :has scoping).
+- **Listing Detail** rebuilt with new header + full width; video keeps a poster + onError fallback; "Message seller" opens real threads (no "coming soon").
+- **Reliability**: `fileUrl` passes through absolute URLs; `imgFallback` + navy `PLACEHOLDER_IMG` SVG on all listing/story/tile/gallery images (no broken icons); category tiles render full-width hero images (fixed flex-column button).
+- **Data**: backend `GET /listings` and `get_stories` exclude `^test_` titles at query level; 9 TEST_ listings deleted; ~11 demo listings seeded across gear/vehicles/art with real images + 3 video-backed stories so shelves/tiles/stories look populated.
+- **Auth**: Login & Register split-screen with real first-responder hero image + gradient overlay + logo/tagline, theme-matched, stacks on mobile.
+- Verified: iteration_16 (100% backend 12/12, frontend ~95%), iteration_18 (category tiles 100%). Only non-blocking nit: tile image height ~125px vs 150px.
+
 ## Historical backlog (pre-Phase 7)

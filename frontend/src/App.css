@@ -2419,6 +2419,13 @@ table.log tr:last-child td {
 }
 @media (max-width: 620px) {
   .cat-tiles { grid-template-columns: repeat(3, 1fr); }
-  .mh-dash span { display: none; }
+  .mh-main-row { flex-wrap: wrap; gap: 10px; }
+  .mh-search { order: 3; flex-basis: 100%; max-width: none; }
+  .mh-actions { width: 100%; justify-content: space-between; gap: 6px; }
+  .mh-sell span, .mh-dash span { display: none; }
+  .mh-dash { padding: 8px 10px; }
+  .mh-chip { gap: 0; }
+  .mh-chip > *:not(.avatar-ring) { display: none; }
 }
+.market-home, .dash { overflow-x: hidden; }
 

@@ -1,0 +1,32 @@
+{
+  "summary": "Frontend-only regression on the new /marketplace (Home) and /dashboard (portal) restructure. Verified post-login redirects, MarketHeader (utility bar, real logo image, search, right-icon actions incl. Sell/Dashboard/profile chip), category nav row, filter rail with live counts + price + condition + distance + video/featured filters, promo carousel with dots, Shop-by-Category tiles, Featured Stories rail, curated shelves, boost band, mega footer, dashboard sidebar (Marketplace/My Listings/Offers/Messages/Saved + Community + Account groups), dashboard stats + saved/jobs views, verified-only gate for unverified new users, Message-seller flow, and no broken images / no TEST_-prefixed titles. Only real issue is header responsiveness at 390px (horizontal overflow ~140px).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "MarketHeader (mh)", "issue": "At 390px viewport the header does NOT reflow. Search bar stays inline with logo+actions, causing horizontal overflow (~140px). mh-actions row measures 530px wide (Sell+Dashboard+icons+profile chip) and mh-nav row extends to ~922px right edge. Spec explicitly requires: 'at 390px … the header search drops to its own row (no horizontal overflow)'.", "selector": "[data-testid=market-header] .mh-main-row / .mh-nav-row / .mh-actions", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Marketplace mobile (390x844)", "issues": ["mh-nav horizontal scroll of category buttons (no wrapping/marquee UX indicator)", "mh-profile-chip name + Verified badge still rendered inline in mobile header contributing to overflow"]}
+    ]
+  },
+  "test_report_links": ["/app/test_reports/screens/mp_390.png"],
+  "action_items": [
+    "Fix responsive layout of MarketHeader at <=480px: stack search onto its own row, hide or collapse mh-profile-chip name/verified label, allow mh-actions to wrap or convert Dashboard/Sell into icons on mobile so total width fits 390px with 0px horizontal overflow.",
+    "Consider making mh-nav horizontally scrollable within the viewport (overflow-x:auto on .mh-nav-row) so category buttons don't push page width."
+  ],
+  "critical_code_review_comments": [
+    "Marketplace.jsx isFiltering also triggers when cat is one of gear/vehicles/art/... which hides the shelves. This is correct behavior but ensure users can still browse promos when just navigating a category — currently only the grid is shown, which matches spec but worth documenting.",
+    "Dashboard 'overview' view actually shows My Listings block; the dash-nav-listings and dash-nav-overview both resolve to the same route (/dashboard). Minor: dash-nav-overview is an external Link to /marketplace, so 'active' state on the sidebar is derived from view param — acceptable.",
+    "In StoryViewer thumb fallback, sc-thumb without photo renders no background but relies on inner .sc-play icon; empty story thumbs will look plain (not broken). OK.",
+    "MarketHeader polls /messages/unread-count and /notifications every 12s; no cancellation on route unmount problem observed."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a", "frontend": "95%"},
+  "test_credentials": "Used buyer2@example.com/BuyerPass#2026 (verified member) and theaidept@gmail.com/FirstUnit#Owner2026! (admin/owner). Registered a throwaway unverif_<ts>@example.com to test the verified-only gate — was redirected to /verification when hitting /marketplace and /dashboard (PASS).",
+  "seed_data_creation": "One fresh unverified user was registered via /register (unverif_<timestamp>@example.com) purely to exercise the gate. No cleanup performed — safe to leave; account is unverified and cannot see marketplace/dashboard.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Desktop UX (1440x900) for /marketplace + /dashboard is fully functional: all data-testids present, filters mutate results (gear -> 9 results, min price 999999 -> empty state, featured only -> 0 results for buyer2 seed which is fine — no featured listings exist in the visible seed), promo carousel + dots + Shop-by-Category tiles + Featured Stories reel (2 stories from owner) all render. mh-nav-jobs correctly routes to /dashboard?view=jobs. ListingCard uses `Link to=/listing/:id` (singular) — Message seller button on ListingDetail opens the real /messages/:threadId (no 'coming soon'). Zero broken images on marketplace or dashboard. Zero TEST_ titles visible on marketplace. Verified-only gate blocks unverified users on both /marketplace and /dashboard (redirects to /verification). Only real defect is header responsiveness at 390px (horizontal overflow of ~140px from mh-actions + mh-nav-row). Note there are pre-existing TEST_ messages inside the buyer2<->owner Duty Belt thread — that's expected (constraint only forbids TEST_ *listings/titles* on marketplace/dashboard).",
+  "rca of the issue": "MarketHeader.mh-main-row is a single flex row (logo + form.mh-search + .mh-actions) with no media-query break to stack children under 480px, and .mh-nav-row uses flex-wrap:nowrap (or a horizontal list) so category buttons extend past viewport. Fix: add @media (max-width: 640px) { .mh-main-row { flex-wrap: wrap } .mh-search { order: 3; flex-basis: 100% } .mh-chip-name, [data-testid=verified-badge] { display: none } .mh-nav-row { overflow-x: auto; scrollbar-width: none } }."
+}

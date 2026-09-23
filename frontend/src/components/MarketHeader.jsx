@@ -91,8 +91,8 @@ export const MarketHeader = ({ onSearch, onNav, activeNav, showNav = true }) => 
             <Link to="/messages" className="mh-icon" title="Alerts" data-testid="mh-alerts">
               <Bell size={19} />{alerts > 0 && <span className="mh-badge gold" data-testid="mh-alerts-badge">{alerts > 9 ? "9+" : alerts}</span>}
             </Link>
-            <Link to="/sell" className="btn btn-primary mh-sell" data-testid="mh-sell-btn">Sell</Link>
-            <Link to="/dashboard" className="btn btn-ghost mh-dash" data-testid="mh-dashboard-btn"><LayoutDashboard size={15} /> Dashboard</Link>
+            <Link to="/sell" className="btn btn-primary mh-sell" data-testid="mh-sell-btn"><span>Sell</span></Link>
+            <Link to="/dashboard" className="btn btn-ghost mh-dash" data-testid="mh-dashboard-btn"><LayoutDashboard size={15} /> <span>Dashboard</span></Link>
             {user?.role === "admin" && <Link to="/admin" className="mh-icon" title="Admin" data-testid="mh-admin"><ShieldCheck size={19} /></Link>}
             <Link to="/profile" className="mh-chip" data-testid="mh-profile-chip">
               <AvatarRing size="sm" src={me?.photo_visibility === "photo" ? me?.avatar : null} initials={me?.initials} />

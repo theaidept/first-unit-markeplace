@@ -18,8 +18,7 @@ export default function Login() {
     setLoading(true);
     try {
       const u = await login(email, password);
-      if (u.role === "admin") navigate("/admin");
-      else if (u.verification_status === "approved") navigate("/marketplace");
+      if (u.verification_status === "approved") navigate("/marketplace");
       else navigate("/verification");
     } catch (err) {
       setError(formatApiErrorDetail(err.response?.data?.detail) || err.message);

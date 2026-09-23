@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { VerifiedBadge } from "./VerifiedBadge";
 import { AvatarRing } from "./AvatarRing";
 import { fileUrl } from "../lib/api";
+import { imgFallback } from "../lib/assets";
 
 export const CATEGORY_LABELS = {
   gear: "Gear & Equipment",
@@ -18,7 +19,7 @@ export const ListingCard = ({ listing: l }) => {
     <Link to={`/listing/${l.id}`} className="listing-card" data-testid={`listing-card-${l.id}`}>
       <div className="lc-media">
         {photo ? (
-          <img src={photo} alt={l.title} />
+          <img src={photo} alt={l.title} onError={imgFallback} />
         ) : (
           <div className="lc-noimg">No photo</div>
         )}

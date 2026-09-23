@@ -1,5 +1,20 @@
-export const IMG = {
-  heroGroup:
+const PLACEHOLDER = "data:image/svg+xml;utf8," + encodeURIComponent(
+  "<svg xmlns='http://www.w3.org/2000/svg' width='400' height='400'>" +
+  "<rect width='400' height='400' fill='#0b1f42'/>" +
+  "<rect width='400' height='400' fill='url(#g)'/>" +
+  "<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>" +
+  "<stop offset='0' stop-color='#16305c'/><stop offset='1' stop-color='#0d1424'/></linearGradient></defs>" +
+  "<text x='50%' y='50%' fill='#c9a24a' font-family='Oswald,Arial' font-size='30' font-weight='700' " +
+  "letter-spacing='3' text-anchor='middle' dominant-baseline='middle'>FIRST UNIT</text></svg>"
+);
+export const PLACEHOLDER_IMG = PLACEHOLDER;
+export const imgFallback = (e) => {
+  if (e.currentTarget.dataset.fb) return;
+  e.currentTarget.dataset.fb = "1";
+  e.currentTarget.src = PLACEHOLDER;
+};
+
+export const IMG = {  heroGroup:
     "https://static.prod-images.emergentagent.com/jobs/77f9cf0f-d6ac-4fc8-9cd5-77c8080c4b26/images/128b4a12bbf53ed9e1be3ae93f9d2b15c02e06088949957d0efd2238b5affc03.jpeg",
   heroGear:
     "https://static.prod-images.emergentagent.com/jobs/77f9cf0f-d6ac-4fc8-9cd5-77c8080c4b26/images/effc81ad2767a7db46a16a22d9aab36e5ca2835bb653c506af955fd9e3d64d91.jpeg",

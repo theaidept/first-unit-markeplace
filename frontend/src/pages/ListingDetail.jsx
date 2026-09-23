@@ -40,6 +40,10 @@ export default function ListingDetail() {
       const { data } = await api.get(`/listings/${id}`);
       setL(data);
       setMeetup(data.meetup_note || "");
+      try {
+        const prev = JSON.parse(localStorage.getItem("fu_recent") || "[]").filter((x) => x !== id);
+        localStorage.setItem("fu_recent", JSON.stringify([id, ...prev].slice(0, 12)));
+      } catch { /* ignore */ }
       await loadOffers();
     } catch {
       setNotFound(true);

@@ -22,6 +22,7 @@ import PaymentSuccess from "./pages/PaymentSuccess";
 import PaymentCancel from "./pages/PaymentCancel";
 import Messages from "./pages/Messages";
 import Thread from "./pages/Thread";
+import Dashboard from "./pages/Dashboard";
 
 function App() {
   return (
@@ -55,6 +56,14 @@ function App() {
             element={
               <RequireApproved>
                 <Marketplace />
+              </RequireApproved>
+            }
+          />
+          <Route
+            path="/dashboard"
+            element={
+              <RequireApproved>
+                <Dashboard />
               </RequireApproved>
             }
           />

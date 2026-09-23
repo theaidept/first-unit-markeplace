@@ -1,0 +1,46 @@
+{
+  "summary": "Iteration 16 — Visual-consistency + reliability pass verified end-to-end. Backend: 12/12 tests pass (auth for owner+buyer, TEST_ prefix exclusion on /api/listings feed and /api/stories, verified-only gate on /api/marketplace/summary returns 403 for unverified & 401 for anon, core endpoints /threads, /transactions/mine, /members, /notifications, /profile/me all 200). Frontend: MarketHeader (data-testid market-header) now renders on EVERY logged-in page tested (/marketplace, /dashboard, /listing/{id}, /messages, /messages/{threadId}, /transactions, /members, /members/{id}, /profile, /verification, /sell) with real logo, mh-search, mh-sell-btn, mh-dashboard-btn, mh-profile-chip, mh-logout; the OLD header (.brand / nav-marketplace / app-links) count = 0 on every page checked. Listing detail rebuilt: message-btn opens real thread (/messages/{id}); no 'coming soon' text; video listing (Turnout Gear — Size L) shows <video data-testid=detail-video> with a navy 'FIRST UNIT' gold-text SVG poster — no black box; photo listings show real images. Marketplace: stories-reel (2 story cards) present after data load, all 4 category tiles (cat-tile-gear/vehicles/art/jobs) render with real Unsplash images or navy placeholder for Jobs, curated shelves shelf-picks/shelf-trending/shelf-new/shelf-near populated with ListingCards showing real photos, no broken images, no TEST_ text leakage. Filter rail works: price 100–5000 => 'results-heading' updates to '12 results'. Auth split-screen /login shows left hero panel + logo + tagline in navy/red and right form. Mobile 390x844: scrollWidth == innerWidth == 390 on both /login and /marketplace (no horizontal overflow). Unverified freshly-registered user is correctly redirected from /marketplace to /verification; /api/marketplace/summary returns 403.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Marketplace 'Shop by Category' tiles",
+        "issue": "The category tile images render as tiny ~20px thumbnails positioned inline next to the label text instead of filling the tile as a background/hero image (see screenshot iter16_marketplace.png). Images DO load (unsplash URLs, imgOk=true) and the placeholder for Jobs works, but the .ct-img / .cat-tile CSS appears to be missing display/height rules so <img> is unstyled. Visually the tiles look empty. Not a blocker but breaks the intended 'shop by category with hero image' design.",
+        "selector": "[data-testid^='cat-tile-'] .ct-img img",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_visual_consistency_iter16.py",
+    "/app/test_reports/pytest/iter16_results.xml",
+    "/app/test_reports/screens/iter16_login.png",
+    "/app/test_reports/screens/iter16_login_mobile.png",
+    "/app/test_reports/screens/iter16_marketplace.png",
+    "/app/test_reports/screens/iter16_listing_detail.png",
+    "/app/test_reports/screens/iter16_listing_video.png"
+  ],
+  "action_items": [
+    "Fix CSS for .cat-tile / .ct-img on Marketplace so the tile image renders as a large hero (e.g. .ct-img{display:block;height:140px;position:relative} .ct-img img{width:100%;height:100%;object-fit:cover}) — currently the img has no dimensions so it collapses to intrinsic ~20px next to the label."
+  ],
+  "critical_code_review_comments": [
+    "MarketHeader polls /messages/unread-count and /notifications every 12s from a shared component; because it's mounted on every logged-in page it will double-fire when the route also loads its own data. Consider a single hook or context provider to dedupe.",
+    "backend/server.py line 1278 uses a case-insensitive '^test_' regex to exclude titles — matches 'test_' but also legitimately-authored titles starting with 'Test_' etc. Consider explicit '^TEST_' (case-sensitive) or a dedicated is_test_seed flag on the listing document for cleaner separation.",
+    "MarketHeader.jsx: profile info is fetched via api.get('/profile/me') on every mount of any page. Move to a top-level React context/AuthContext to avoid N duplicate requests during navigation."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_visual_consistency_iter16.py"
+  ],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "~95% (1 medium CSS bug on category tile images)"},
+  "test_credentials": "Owner: theaidept@gmail.com / FirstUnit#Owner2026! ; Verified member: buyer2@example.com / BuyerPass#2026",
+  "seed_data_creation": "Registered 1 throwaway unverified user (test_unverified_<ts>@example.com) to validate the verified-only gate — filtered out by backend TEST_ exclusion so does not pollute UI.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All iteration-16 acceptance criteria verified except one medium visual bug: on Marketplace 'Shop by Category', tile images collapse to tiny thumbnails because .ct-img/.cat-tile CSS lacks explicit dimensions. The <img> elements load correctly (Unsplash URLs OK). If E1 patches App.css sizing, re-run only the frontend marketplace screenshot check. Backend TEST_ exclusion, unified header on every route, listing-detail video poster fix, Message-seller real thread navigation, filter-rail functionality, and mobile-no-overflow are all confirmed working.",
+  "rca of the issue": "Shop-by-Category tile images render inline as tiny thumbnails because the CSS classes .cat-tile / .ct-img have no explicit width/height on the image element. The JSX outputs <span class='ct-img'><img src=… /></span> and relies on CSS for sizing. In the current build the .ct-img rule appears to be missing (or overridden), so the <img> takes its intrinsic 0x0 -> 20px baseline size and sits next to .ct-label instead of becoming a hero background. Fix: add .ct-img{display:block;width:100%;height:140px;overflow:hidden} .ct-img img{width:100%;height:100%;object-fit:cover;display:block} to App.css and ensure .cat-tile lays label/count below (flex-direction:column). No backend or JS change needed."
+}

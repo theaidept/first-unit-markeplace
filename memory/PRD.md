@@ -140,4 +140,11 @@ First Unit is a mobile-first, **verified-only marketplace WEBSITE** (standard re
 ## Next Tasks
 - All core phases (1–10) complete. Await user acceptance; likely next: wire real ID.me/Twilio credentials, or go-live/deploy.
 
+## Implemented (2026-09-22) — Post-login UI restructure: Marketplace Home + Dashboard portal
+- **/marketplace rebuilt** as a real large-scale Marketplace Home (redirect target after login + after verification for approved users). New `MarketHeader` (sticky utility bar, real First Unit logo, category-dropdown search, Orders/Messages(+unread badge)/Alerts icons, red Sell, Dashboard button, profile chip) + text category nav row. Body: left filter rail (live category counts, price min/max, condition, distance, has-video/featured — all filter the real live set), right column (rotating promo carousel, Shop-by-Category tiles from real category data, Featured Stories rail reusing Stories, curated shelves Picks/Trending/Because-you-viewed[localStorage]/Near-You/New-Today with See-all + a Boost CTA band), and a mega-footer.
+- **/dashboard portal** added (`RequireApproved`): dark navy sidebar (Marketplace, My Listings, Offers & Orders, Messages, Saved · Community: Members, Job Board · Account: Verification, Profile) + mini profile block; top bar reuses MarketHeader. Content = user's own Stories row, stats, and My Listings, reusing existing components; Saved = localStorage watchlist; Job Board view. External nav links route to existing pages — pure navigation/visual shell, no feature changes.
+- **Reliability**: `imgFallback` + designed navy PLACEHOLDER_IMG (SVG) on listing/story/category images (no broken-image icons); TEST_-prefixed listings/stories filtered from these views; "Message seller" already opens real threads. Fully responsive (filter rail hidden <980px; header search drops to its own row + icon-only buttons <620px; zero horizontal overflow at 390px).
+- NO backend changes — reused GET /listings, /stories, /jobs, /profile/me, /listings/mine, /messages/unread-count, /notifications.
+- Tested: iteration_14 (95% → one HIGH mobile-header overflow) then iteration_15 (100%, zero overflow). All acceptance criteria met.
+
 ## Historical backlog (pre-Phase 7)

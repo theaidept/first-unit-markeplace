@@ -1,0 +1,20 @@
+{
+  "summary": "RETEST of iteration_14 HIGH issue: MarketHeader responsive overflow at 390px. Fix is FULLY VERIFIED. At 390x844 on /marketplace and /dashboard, document.scrollWidth == window.innerWidth == 390 (ZERO horizontal overflow). mh-search reflows to its own full-width row (w=390, x=0, y=134). Sell (w=38) and Dashboard (w=37) buttons collapse to icon-only — inner <span> labels correctly computed display:none. mh-profile-chip collapses to avatar-only (w=38) with .mh-chip-name and [data-testid=verified-badge] both display:none. On mobile /dashboard the sidebar is position:static (stacked above content), width=390, top=187, left=0 — no fixed-left overlap. Desktop 1440x900 regression: Sell/Dashboard spans display:block, chip shows name 'buyer2' + Verified badge (chip w≈178), sidebar position:sticky left:0 width:250. Core flows regression: mh-dashboard-btn -> /dashboard PASS, mh-sell-btn -> /sell PASS, filter-rail present, 4 shelves render on desktop marketplace.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/test_reports/mp_390_retest.png", "/app/test_reports/db_390_retest.png", "/app/test_reports/mp_1440_retest.png"],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a", "frontend": "100%"},
+  "test_credentials": "buyer2@example.com / BuyerPass#2026 (verified member)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "iteration_14 HIGH responsive-overflow issue is fully resolved. Measurements at 390px: scrollWidth==innerWidth==390 on both /marketplace and /dashboard. Sell/Dashboard button label spans hidden via CSS display:none in @media <=620px; profile chip name+verified-badge also display:none on mobile. Dashboard sidebar switches from position:sticky (desktop) to position:static full-width (mobile). All desktop rendering unchanged. No new regressions detected.",
+  "rca of the issue": "Previously the .mh-main-row was a single non-wrapping flex row with the search inline and .mh-actions containing full-text Sell/Dashboard buttons + expanded profile chip, causing ~140px overflow at 390px. Fix: wrapped label text in <span> inside Sell/Dashboard buttons and added @media (max-width:620px) rules that (a) flex-wrap the main row and give mh-search flex-basis:100% on its own row, (b) display:none the button label spans and chip name/verified badge, (c) set overflow-x:hidden on .market-home and .dash so any inner overflow (e.g. mh-nav horizontal scroll) doesn't push document width. Verified with document.documentElement.scrollWidth measurement."
+}

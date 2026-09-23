@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { AppNav } from "../components/AppNav";
+import { DashboardLayout } from "../components/DashboardLayout";
 import { AvatarRing } from "../components/AvatarRing";
 import { VerifiedBadge } from "../components/VerifiedBadge";
 import api, { fileUrl, formatApiErrorDetail } from "../lib/api";
@@ -85,15 +85,14 @@ export default function Thread() {
 
   if (notFound) {
     return (
-      <div className="fu-app" data-testid="thread-page">
-        <AppNav />
-        <div className="wrap" style={{ paddingTop: 40, maxWidth: 720 }}>
+      <DashboardLayout active="messages" testid="thread-page">
+        <div style={{ maxWidth: 720 }}>
           <div className="card" style={{ padding: 40, textAlign: "center" }}>
             Conversation not found.
             <div style={{ marginTop: 14 }}><Link to="/messages" className="btn btn-primary">Back to messages</Link></div>
           </div>
         </div>
-      </div>
+      </DashboardLayout>
     );
   }
 
@@ -101,9 +100,8 @@ export default function Thread() {
   const listing = thread?.listing || {};
 
   return (
-    <div className="fu-app" data-testid="thread-page">
-      <AppNav />
-      <div className="wrap" style={{ paddingTop: 20, maxWidth: 720 }}>
+    <DashboardLayout active="messages" testid="thread-page">
+      <div style={{ maxWidth: 720 }}>
         <button className="btn btn-ghost" onClick={() => navigate("/messages")} data-testid="thread-back-btn" style={{ marginBottom: 12 }}>
           <ArrowLeft size={15} /> All messages
         </button>
@@ -195,6 +193,6 @@ export default function Thread() {
           </div>
         </div>
       )}
-    </div>
+    </DashboardLayout>
   );
 }

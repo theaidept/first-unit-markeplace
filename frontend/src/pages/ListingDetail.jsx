@@ -4,6 +4,8 @@ import { AppNav } from "../components/AppNav";
 import { AvatarRing } from "../components/AvatarRing";
 import { VerifiedBadge } from "../components/VerifiedBadge";
 import { CATEGORY_LABELS } from "../components/ListingCard";
+import { StarRating } from "../components/StarRating";
+import { ratingFor } from "../lib/ratings";
 import { ReportDialog } from "../components/ReportDialog";
 import api, { fileUrl, formatApiErrorDetail } from "../lib/api";
 import { PLACEHOLDER_IMG, imgFallback } from "../lib/assets";
@@ -198,11 +200,18 @@ export default function ListingDetail() {
           <div>
             <div className="buy-card card" data-testid="buy-card">
               <div className="lc-price" style={{ fontSize: 30 }}>${Number(l.price).toLocaleString()}</div>
-              <h1 className="oswald" style={{ color: "var(--navy)", fontSize: 24, margin: "6px 0 10px" }}>{l.title}</h1>
+              <h1 className="oswald" style={{ color: "var(--navy)", fontSize: 24, margin: "6px 0 8px" }}>{l.title}</h1>
+              <div className="detail-rating" data-testid="detail-rating">
+                {(() => { const r = ratingFor(l.id); return <StarRating value={r.value} count={r.count} size={16} />; })()}
+              </div>
               <div className="detail-meta">
                 <span><Tag size={13} /> {CATEGORY_LABELS[l.category] || l.category}</span>
-                <span>{l.condition}</span>
                 {l.location && <span><MapPin size={13} /> {l.location}</span>}
+              </div>
+              <div className="detail-fields">
+                <div className="df"><div className="df-k">Condition</div><div className="df-v">{l.condition}</div></div>
+                <div className="df"><div className="df-k">Category</div><div className="df-v">{CATEGORY_LABELS[l.category] || l.category}</div></div>
+                {l.location && <div className="df"><div className="df-k">Location</div><div className="df-v">{l.location}</div></div>}
               </div>
 
               {!isOwner && (

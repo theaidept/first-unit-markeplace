@@ -732,6 +732,15 @@ async def marketplace_summary(user: dict = Depends(require_verified)):
     }
 
 
+TEST_EMAIL_RE = re.compile(r"^(test[._-]|.*@(example|test)\.(com|org)$)", re.I)
+
+
+def _is_test_account(u: dict, profile: dict = None) -> bool:
+    email = (u.get("email") or "").lower()
+    handle = ((profile or {}).get("display_handle") or "").lower()
+    return bool(TEST_EMAIL_RE.match(email)) or handle.startswith("test")
+
+
 @api.get("/members")
 async def members(user: dict = Depends(require_verified)):
     users = await db.users.find(
@@ -741,7 +750,7 @@ async def members(user: dict = Depends(require_verified)):
     out = []
     for u in users:
         profile = await db.profiles.find_one({"user_id": u["id"]}, {"_id": 0})
-        if profile:
+        if profile and not _is_test_account(u, profile):
             out.append(public_profile(profile, u))
     return {"members": out}
 
@@ -1173,7 +1182,7 @@ async def upload_photo(file: UploadFile = File(...), user: dict = Depends(requir
 
 
 @api.get("/files/{path:path}")
-async def serve_file(path: str, user: dict = Depends(require_verified)):
+async def serve_file(path: str, request: Request, user: dict = Depends(require_verified)):
     record = await db.files.find_one({"storage_path": path, "is_deleted": False})
     if not record:
         raise HTTPException(status_code=404, detail="File not found")
@@ -1182,8 +1191,27 @@ async def serve_file(path: str, user: dict = Depends(require_verified)):
     except Exception as e:
         logger.error(f"file fetch failed: {e}")
         raise HTTPException(status_code=404, detail="File not found")
-    return Response(content=data, media_type=record.get("content_type", ctype),
-                    headers={"Cache-Control": "private, max-age=3600"})
+    media_type = record.get("content_type", ctype)
+    total = len(data)
+    range_header = request.headers.get("range")
+    # Byte-range support so browsers can stream / seek video (required for <video> playback).
+    if range_header:
+        m = re.match(r"bytes=(\d+)-(\d*)", range_header)
+        if m:
+            start = int(m.group(1))
+            end = int(m.group(2)) if m.group(2) else total - 1
+            end = min(end, total - 1)
+            if start <= end < total:
+                chunk = data[start:end + 1]
+                return Response(content=chunk, status_code=206, media_type=media_type, headers={
+                    "Content-Range": f"bytes {start}-{end}/{total}",
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": str(len(chunk)),
+                    "Cache-Control": "private, max-age=3600",
+                })
+    return Response(content=data, media_type=media_type,
+                    headers={"Accept-Ranges": "bytes", "Content-Length": str(total),
+                             "Cache-Control": "private, max-age=3600"})
 
 
 @api.post("/listings")
@@ -2580,9 +2608,196 @@ async def seed_jobs():
             })
 
 
+DEMO_SEED_V = "2026-06-final-ui-4"
+SAMPLE_MP4_URL = "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4"
+
+DEMO_SELLERS = [
+    {"email": "pdunit22@firstunit.us", "handle": "PD Unit 22", "agency": "Metro Police Dept",
+     "rank": "Officer", "years": "9", "rtype": "law_enforcement", "status": "active",
+     "avatar": "https://images.unsplash.com/photo-1746640546704-74e784dcd986?crop=entropy&cs=srgb&fm=jpg&q=85&w=400",
+     "paypal_me": "pdunit22", "venmo": "pd-unit-22"},
+    {"email": "engine14@firstunit.us", "handle": "Engine 14", "agency": "City Fire Dept",
+     "rank": "Lieutenant", "years": "14", "rtype": "firefighter_career", "status": "active",
+     "avatar": "https://images.pexels.com/photos/5965214/pexels-photo-5965214.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=400&w=400",
+     "paypal_me": "engine14", "venmo": "engine-14"},
+    {"email": "station9ems@firstunit.us", "handle": "Station 9 EMS", "agency": "County EMS",
+     "rank": "Paramedic", "years": "7", "rtype": "emt_paramedic", "status": "active",
+     "avatar": "https://images.pexels.com/photos/6519883/pexels-photo-6519883.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=400&w=400",
+     "paypal_me": "station9ems", "venmo": "station-9"},
+    {"email": "austinpd@firstunit.us", "handle": "Austin PD", "agency": "Austin Police",
+     "rank": "Sergeant", "years": "12", "rtype": "law_enforcement", "status": "active",
+     "avatar": "https://images.pexels.com/photos/7714968/pexels-photo-7714968.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=400&w=400",
+     "paypal_me": "austinpd", "venmo": "austin-pd"},
+    {"email": "dispatch4@firstunit.us", "handle": "Dispatch 4", "agency": "Central Dispatch",
+     "rank": "Dispatcher", "years": "6", "rtype": "dispatcher", "status": "active",
+     "avatar": "https://images.pexels.com/photos/7714714/pexels-photo-7714714.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=400&w=400",
+     "paypal_me": "dispatch4", "venmo": "dispatch-4"},
+    {"email": "retired22@firstunit.us", "handle": "Retired 22yr", "agency": "Retired FDNY",
+     "rank": "Captain (Ret.)", "years": "22", "rtype": "firefighter_career", "status": "retired",
+     "avatar": "https://images.unsplash.com/photo-1735107673395-f5c24b0cb758?crop=entropy&cs=srgb&fm=jpg&q=85&w=400",
+     "paypal_me": "retired22", "venmo": "retired-22"},
+]
+
+_VID = "https://test-videos.co.uk/vids/"
+_FLOWER = _VID + "bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_2MB.mp4"
+_BBB = _VID + "bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4"
+_JELLY = _VID + "jellyfish/mp4/h264/360/Jellyfish_360_10s_1MB.mp4"
+_SINTEL = _VID + "sintel/mp4/h264/360/Sintel_360_10s_1MB.mp4"
+# (seller_idx, title, category, condition, price, location, [photos], video, featured, description)
+DEMO_LISTINGS = [
+    (1, "Turnout Gear — Size L", "gear", "Excellent", 240, "Austin, TX",
+     ["https://images.unsplash.com/photo-1705503831905-02aa99bfcd50?crop=entropy&cs=srgb&fm=jpg&q=85&w=900"],
+     _FLOWER, True, "NFPA-compliant structural turnout coat and pants, size L. Light wear, no burns or tears. Retired from active duty."),
+    (1, "Fire Helmet with Face Shield", "gear", "Good", 120, "Austin, TX",
+     ["https://images.pexels.com/photos/35461837/pexels-photo-35461837.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"],
+     None, False, "Traditional fire helmet with attached face shield and adjustable ratchet. Solid shell, ready for service."),
+    (5, "Structural Turnout Coat — Size L", "gear", "Good", 175, "Round Rock, TX",
+     ["https://images.unsplash.com/photo-1705503831904-9a32c0210723?crop=entropy&cs=srgb&fm=jpg&q=85&w=900"],
+     None, False, "Reflective trim in great shape. Liner intact. A dependable backup coat."),
+    (1, "Yellow Bunker Boots — 10", "gear", "Good", 90, "Austin, TX",
+     ["https://images.pexels.com/photos/36870542/pexels-photo-36870542.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"],
+     None, False, "Rubber bunker boots, men's size 10. Steel toe and midsole. Plenty of tread left."),
+    (0, "Duty Belt Set", "gear", "Excellent", 85, "Austin, TX",
+     ["https://images.pexels.com/photos/7714764/pexels-photo-7714764.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"],
+     _BBB, False, "Complete nylon duty belt with pouches and keepers. Clean and fully functional."),
+    (0, "Motorola Duty Radio", "gear", "Good", 55, "Austin, TX",
+     ["https://images.pexels.com/photos/7714759/pexels-photo-7714759.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"],
+     None, False, "Handheld duty radio with belt clip. Holds a charge well. Battery included."),
+    (2, "Medic Bag — Fully Stocked", "gear", "Excellent", 150, "Travis County, TX",
+     ["https://images.pexels.com/photos/8942498/pexels-photo-8942498.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"],
+     _JELLY, True, "Trauma / medic bag with modular compartments. Durable, water-resistant shell. Contents pictured for reference."),
+    (3, "Tactical Duty Gloves (pair)", "gear", "Good", 35, "Austin, TX",
+     ["https://images.unsplash.com/photo-1644308977849-45a83bf3b067?crop=entropy&cs=srgb&fm=jpg&q=85&w=900"],
+     None, False, "Reinforced knuckle tactical gloves, size L. Touch-screen compatible fingertips."),
+    (4, "Wildland Response Pack", "gear", "Fair", 110, "Austin, TX",
+     ["https://images.unsplash.com/photo-1758618851341-35cfd04b5406?crop=entropy&cs=srgb&fm=jpg&q=85&w=900"],
+     None, False, "Wildland-rated pack with hydration sleeve and MOLLE webbing. Honest fair condition, fully usable."),
+    (0, "Retired Patrol Interceptor", "vehicles", "Good", 18500, "Austin, TX",
+     ["https://images.unsplash.com/photo-1731099461851-2ec3c454e583?crop=entropy&cs=srgb&fm=jpg&q=85&w=1000"],
+     _SINTEL, False, "Decommissioned patrol sedan. Runs strong, maintained on schedule. Emergency equipment removed."),
+    (3, "Command Response SUV", "vehicles", "Excellent", 26400, "Austin, TX",
+     ["https://images.pexels.com/photos/9501927/pexels-photo-9501927.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"],
+     None, False, "Command-configured SUV, well maintained. Ideal for department or reserve use."),
+    (1, "'19 Rescue Engine", "vehicles", "Good", 41000, "Round Rock, TX",
+     ["https://images.unsplash.com/photo-1622783089891-ddf18baab338?crop=entropy&cs=srgb&fm=jpg&q=85&w=1000"],
+     _BBB, True, "2019 rescue engine, low pump hours. Full service records available on request."),
+    (2, "ATV — Wildland Rated", "vehicles", "Good", 6400, "Travis County, TX",
+     ["https://images.pexels.com/photos/11725657/pexels-photo-11725657.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"],
+     None, False, "Utility ATV set up for wildland response. New tires, recent service."),
+    (5, "Academy Ring", "art", "Excellent", 310, "New York, NY",
+     ["https://images.unsplash.com/photo-1543294001-f7cd5d7fb516?crop=entropy&cs=srgb&fm=jpg&q=85&w=900"],
+     None, False, "Commemorative academy ring, gold finish. A meaningful keepsake for a fellow responder."),
+    (0, "Challenge Coin Collection", "art", "Excellent", 90, "Austin, TX",
+     ["https://images.pexels.com/photos/38598946/pexels-photo-38598946.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"],
+     None, False, "Curated set of department and mutual-aid challenge coins. Display-ready."),
+    (5, "Framed Station Print", "art", "Good", 60, "New York, NY",
+     ["https://images.unsplash.com/photo-1559108318-39ed452bb6c9?crop=entropy&cs=srgb&fm=jpg&q=85&w=900"],
+     None, False, "Framed vintage station print. Great wall piece for a firehouse or office."),
+    (4, "Commemorative Patch Set", "art", "Excellent", 45, "Austin, TX",
+     ["https://images.unsplash.com/photo-1780520813058-f6f80021dd80?crop=entropy&cs=srgb&fm=jpg&q=85&w=900"],
+     None, False, "Collector patch set spanning several departments. Never mounted."),
+    (4, "Dispatch Headset", "art", "Good", 45, "Austin, TX",
+     ["https://images.pexels.com/photos/32297869/pexels-photo-32297869.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"],
+     None, False, "Professional dual-mic dispatch headset. Comfortable for long shifts."),
+]
+
+
+async def seed_demo():
+    """One-time (per version) cleanup of test/junk data + curated, fully-populated demo marketplace.
+    Only ever removes test/demo accounts + their content — never real member listings."""
+    flag = await db.config.find_one({"key": "demo_seed_v"})
+    if flag and flag.get("v") == DEMO_SEED_V:
+        return
+
+    keep_emails = {(os.environ.get("OWNER_EMAIL") or "").lower(),
+                   (os.environ.get("ADMIN_EMAIL") or "").lower(),
+                   "buyer2@example.com"}
+    # Remove every non-admin, non-kept member and all their private records.
+    async for u in db.users.find({"role": {"$ne": "admin"}}):
+        if u.get("email", "").lower() in keep_emails:
+            continue
+        uid = u["id"]
+        await db.profiles.delete_many({"user_id": uid})
+        await db.verification_records.delete_many({"user_id": uid})
+        await db.users.delete_one({"id": uid})
+    # Wipe demo marketplace collections for a clean slate.
+    for coll in ("listings", "stories", "offers", "transactions", "threads",
+                 "messages", "message_reads", "reports", "boost_purchases"):
+        await db[coll].delete_many({})
+
+    # Create curated demo sellers.
+    seller_ids = []
+    for s in DEMO_SELLERS:
+        email = s["email"].lower()
+        existing = await db.users.find_one({"email": email})
+        if existing:
+            uid = existing["id"]
+        else:
+            uid = str(uuid.uuid4())
+            await db.users.insert_one({
+                "id": uid, "email": email, "password_hash": hash_password("FirstUnit#Demo2026!"),
+                "phone": "+15125550000", "role": "member",
+                "responder_type": s["rtype"], "service_status": s["status"],
+                "verification_status": "approved",
+                "paypal_me": s["paypal_me"], "paypal_email": None, "venmo_handle": s["venmo"],
+                "paypal_ref": None, "created_at": now_iso(),
+            })
+        await db.profiles.delete_many({"user_id": uid})
+        await db.profiles.insert_one({
+            "id": str(uuid.uuid4()), "user_id": uid, "display_handle": s["handle"],
+            "avatar": s["avatar"], "agency": s["agency"], "rank": s["rank"],
+            "years_of_service": s["years"], "verified_badge": True,
+            "photo_visibility": "photo", "undercover": False, "created_at": now_iso(),
+        })
+        vid = str(uuid.uuid4())
+        await db.verification_records.delete_many({"user_id": uid})
+        await db.verification_records.insert_one({
+            "id": vid, "user_id": uid, "current_state": "approved", "provider": "ID.me",
+            "provider_reference": None, "outcome": "approved",
+            "created_at": now_iso(), "updated_at": now_iso(),
+        })
+        seller_ids.append(uid)
+
+    # Self-host a demo video (same-origin via /api/files) so playback is CSP/host independent.
+    demo_video_path = None
+    try:
+        data = await asyncio.to_thread(lambda: requests.get(SAMPLE_MP4_URL, timeout=90).content)
+        if data:
+            vpath = f"{APP_NAME}/demo/sample-{uuid.uuid4()}.mp4"
+            result = await asyncio.to_thread(put_object, vpath, data, "video/mp4")
+            await db.files.insert_one({
+                "id": str(uuid.uuid4()), "storage_path": result["path"],
+                "original_filename": "demo.mp4", "content_type": "video/mp4",
+                "size": result.get("size"), "owner_id": seller_ids[0], "is_deleted": False,
+                "created_at": now_iso(),
+            })
+            demo_video_path = f"/api/files/{result['path']}"
+    except Exception as e:
+        logger.error(f"demo video store failed: {e}")
+
+    # Create curated demo listings (+ stories for the video ones).
+    far = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+    base = datetime.now(timezone.utc)
+    for i, (si, title, cat, cond, price, loc, photos, video, feat, desc) in enumerate(DEMO_LISTINGS):
+        lid = str(uuid.uuid4())
+        ts = (base - timedelta(hours=i)).isoformat()
+        doc = {
+            "id": lid, "seller_id": seller_ids[si], "title": title, "category": cat,
+            "condition": cond, "location": loc, "description": desc, "price": float(price),
+            "photos": photos, "video": (demo_video_path if video else None),
+            "meetup_note": "Meet at a staffed, station-adjacent public location for a safe exchange.",
+            "status": "live", "featured": feat, "featured_until": far if feat else None,
+            "created_at": ts, "updated_at": ts,
+        }
+        await db.listings.insert_one(doc)
+        await sync_story(doc)
+
+    await db.config.update_one({"key": "demo_seed_v"}, {"$set": {"v": DEMO_SEED_V}}, upsert=True)
+    logger.info("Demo marketplace seeded (%d listings, %d sellers)", len(DEMO_LISTINGS), len(seller_ids))
+
+
 @app.on_event("startup")
 async def startup():
-    await db.users.create_index("email", unique=True)
     await db.users.create_index("id", unique=True)
     await db.password_reset_tokens.create_index("token")
     await db.login_attempts.create_index("identifier")
@@ -2596,6 +2811,7 @@ async def startup():
     await seed_categories()
     await seed_boosts()
     await seed_jobs()
+    await seed_demo()
     try:
         await asyncio.to_thread(init_storage)
         logger.info("Object storage initialized")

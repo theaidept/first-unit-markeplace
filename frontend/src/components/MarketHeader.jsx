@@ -1,11 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { AvatarRing } from "./AvatarRing";
 import { VerifiedBadge } from "./VerifiedBadge";
 import api from "../lib/api";
 import logo from "../assets/logo.png";
-import { Search, ShoppingBag, MessageSquare, Bell, LayoutDashboard, ShieldCheck, LogOut } from "lucide-react";
+import { Search, ShoppingBag, MessageSquare, Bell, LayoutDashboard, ShieldCheck, LogOut, ChevronDown, Package, Tag, UserCircle } from "lucide-react";
 
 const CATS = [
   { key: "all", label: "All Categories" },
@@ -34,6 +34,16 @@ export const MarketHeader = ({ onSearch, onNav, activeNav, showNav = true }) => 
   const [unread, setUnread] = useState(0);
   const [alerts, setAlerts] = useState(0);
   const [me, setMe] = useState(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    const onDoc = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  const signOut = async () => { setMenuOpen(false); await logout(); navigate("/"); };
 
   useEffect(() => {
     let stop = false;
@@ -94,12 +104,23 @@ export const MarketHeader = ({ onSearch, onNav, activeNav, showNav = true }) => 
             <Link to="/sell" className="btn btn-primary mh-sell" data-testid="mh-sell-btn"><span>Sell</span></Link>
             <Link to="/dashboard" className="btn btn-ghost mh-dash" data-testid="mh-dashboard-btn"><LayoutDashboard size={15} /> <span>Dashboard</span></Link>
             {user?.role === "admin" && <Link to="/admin" className="mh-icon" title="Admin" data-testid="mh-admin"><ShieldCheck size={19} /></Link>}
-            <Link to="/profile" className="mh-chip" data-testid="mh-profile-chip">
-              <AvatarRing size="sm" src={me?.photo_visibility === "photo" ? me?.avatar : null} initials={me?.initials} />
-              <span className="mh-chip-name">{me?.display_handle || user?.email?.split("@")[0]}</span>
-              {(me?.verified_badge ?? user?.verification_status === "approved") && <VerifiedBadge />}
-            </Link>
-            <button className="mh-icon" title="Log out" data-testid="mh-logout" onClick={async () => { await logout(); navigate("/"); }}><LogOut size={18} /></button>
+            <div className="mh-chip-wrap" ref={menuRef}>
+              <button className="mh-chip" data-testid="mh-profile-chip" onClick={() => setMenuOpen((o) => !o)}>
+                <AvatarRing size="sm" src={me?.photo_visibility === "photo" ? me?.avatar : null} initials={me?.initials} />
+                <span className="mh-chip-name">{me?.display_handle || user?.email?.split("@")[0]}</span>
+                {(me?.verified_badge ?? user?.verification_status === "approved") && <VerifiedBadge />}
+                <ChevronDown size={14} className={`mh-caret ${menuOpen ? "up" : ""}`} />
+              </button>
+              {menuOpen && (
+                <div className="mh-menu" data-testid="mh-profile-menu" onClick={() => setMenuOpen(false)}>
+                  <Link to="/profile" data-testid="mh-menu-profile"><UserCircle size={15} /> Profile</Link>
+                  <Link to="/dashboard" data-testid="mh-menu-listings"><Package size={15} /> My Listings</Link>
+                  <Link to="/transactions" data-testid="mh-menu-orders"><Tag size={15} /> Orders &amp; Offers</Link>
+                  <Link to="/verification" data-testid="mh-menu-verification"><ShieldCheck size={15} /> Verification</Link>
+                  <button type="button" className="mh-menu-signout" data-testid="mh-menu-signout" onClick={signOut}><LogOut size={15} /> Sign Out</button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

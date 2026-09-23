@@ -2432,3 +2432,68 @@ table.log tr:last-child td {
 }
 .market-home, .dash { overflow-x: hidden; }
 
+
+/* ================= FINAL UI POLISH PASS (spacing, ratings, dropdown, shell) ================= */
+
+/* Consistent site-wide inner padding */
+.wrap { padding: 0 32px; }
+.dash-main { padding: 32px; max-width: 1240px; }
+.dash-lede { color: var(--text-dim); max-width: 640px; line-height: 1.6; margin: 6px 0 24px; font-size: 14px; }
+.dash-h { margin: 6px 0 4px; }
+@media (max-width: 640px) {
+    .wrap { padding: 0 16px; }
+    .dash-main { padding: 16px; }
+}
+
+/* Star rating (read-only display component) */
+.star-rating { display: inline-flex; align-items: center; gap: 6px; }
+.sr-stars { display: inline-flex; gap: 1px; }
+.sr-slot { position: relative; display: inline-flex; }
+.sr-bg { color: #d7dbe2; fill: none; }
+.sr-fg { position: absolute; inset: 0; overflow: hidden; display: inline-flex; }
+.sr-fill { color: var(--gold, #c8a13a); fill: var(--gold, #c8a13a); }
+.sr-val { font-size: 12.5px; color: var(--navy); font-weight: 700; }
+.sr-count { font-size: 12px; color: var(--text-faint); }
+.lc-rating { margin: 2px 0 10px; }
+
+/* Profile dropdown menu in the header */
+.mh-chip-wrap { position: relative; }
+.mh-chip { background: none; border: none; cursor: pointer; }
+.mh-caret { color: var(--text-faint); transition: transform 0.15s ease; }
+.mh-caret.up { transform: rotate(180deg); }
+.mh-menu {
+    position: absolute; right: 0; top: calc(100% + 10px); min-width: 214px;
+    background: #fff; border: 1px solid var(--hairline); border-radius: 4px;
+    box-shadow: 0 18px 44px -20px rgba(11, 31, 66, 0.5); padding: 6px; z-index: 70;
+    display: flex; flex-direction: column;
+}
+.mh-menu a, .mh-menu button {
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px; font-size: 13.5px;
+    font-weight: 600; color: var(--navy); text-decoration: none; background: none; border: none;
+    text-align: left; cursor: pointer; border-radius: 3px; width: 100%;
+}
+.mh-menu a:hover, .mh-menu button:hover { background: var(--panel-2); }
+.mh-menu .mh-menu-signout { color: var(--red); border-top: 1px solid var(--hairline); margin-top: 4px; }
+
+/* Listing detail — rating + labeled fields */
+.detail-rating { margin: 0 0 12px; }
+.detail-fields {
+    display: flex; gap: 30px; flex-wrap: wrap; margin: 16px 0 4px; padding: 14px 0;
+    border-top: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline);
+}
+.df-k { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-faint); }
+.df-v { font-size: 14px; font-weight: 700; color: var(--navy); margin-top: 3px; text-transform: capitalize; }
+
+/* Marketplace category tiles — richer imagery */
+.market-home .ct-img { height: 168px; }
+
+/* Verification — readable side overlay + full-width main */
+.verify-side { position: relative; background-position: center; }
+.verify-side::before {
+    content: ""; position: absolute; inset: 0; z-index: 0;
+    background: linear-gradient(180deg, rgba(9, 20, 40, 0.82), rgba(9, 20, 40, 0.93));
+}
+.verify-side > * { position: relative; z-index: 1; }
+.verify-main { max-width: none; width: 100%; padding: 48px 44px; }
+@media (max-width: 900px) { .verify-main { padding: 30px 20px; } }
+

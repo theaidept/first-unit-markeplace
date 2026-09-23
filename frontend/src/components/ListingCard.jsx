@@ -1,8 +1,10 @@
 import { Link } from "react-router-dom";
 import { VerifiedBadge } from "./VerifiedBadge";
 import { AvatarRing } from "./AvatarRing";
+import { StarRating } from "./StarRating";
 import { fileUrl } from "../lib/api";
 import { imgFallback } from "../lib/assets";
+import { ratingFor } from "../lib/ratings";
 
 export const CATEGORY_LABELS = {
   gear: "Gear & Equipment",
@@ -29,6 +31,7 @@ export const ListingCard = ({ listing: l }) => {
       <div className="lc-body">
         <div className="lc-price">${Number(l.price).toLocaleString()}</div>
         <div className="lc-title">{l.title}</div>
+        <div className="lc-rating">{(() => { const r = ratingFor(l.id); return <StarRating value={r.value} count={r.count} size={13} />; })()}</div>
         <div className="lc-seller">
           <AvatarRing size="sm" src={showPhoto ? s.avatar : null} initials={showInitials ? s.initials : undefined} />
           <span className="lc-handle">{s.display_handle}</span>

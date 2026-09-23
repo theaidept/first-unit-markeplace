@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { AppNav } from "../components/AppNav";
+import { DashboardLayout } from "../components/DashboardLayout";
 import { AvatarRing } from "../components/AvatarRing";
 import { VerifiedBadge } from "../components/VerifiedBadge";
 import api, { fileUrl } from "../lib/api";
@@ -34,13 +34,10 @@ export default function Messages() {
   }, []);
 
   return (
-    <div className="fu-app" data-testid="messages-page">
-      <AppNav />
-      <div className="wrap" style={{ paddingTop: 26, maxWidth: 760 }}>
+    <DashboardLayout active="messages" testid="messages-page">
+      <div style={{ maxWidth: 760 }}>
         <span className="eyebrow tick">Messages</span>
-        <h1 className="oswald" style={{ fontSize: 30, color: "var(--navy)", margin: "8px 0 20px" }}>
-          Your conversations
-        </h1>
+        <h1 className="oswald dash-h">Your conversations</h1>
 
         {threads === null ? (
           <div style={{ padding: 40, color: "var(--text-faint)" }}>Loading…</div>
@@ -74,6 +71,6 @@ export default function Messages() {
           </div>
         )}
       </div>
-    </div>
+    </DashboardLayout>
   );
 }

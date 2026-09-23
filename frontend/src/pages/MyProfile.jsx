@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AppNav } from "../components/AppNav";
+import { DashboardLayout } from "../components/DashboardLayout";
 import { ProfileCard } from "../components/ProfileCard";
 import { PaymentSettings } from "../components/PaymentSettings";
 import { AvatarRing } from "../components/AvatarRing";
@@ -66,10 +66,9 @@ export default function MyProfile() {
 
   if (!p || !form) {
     return (
-      <div className="fu-app">
-        <AppNav />
-        <div className="wrap" style={{ padding: 40, color: "var(--text-faint)" }}>Loading…</div>
-      </div>
+      <DashboardLayout active="profile" testid="my-profile-page">
+        <div style={{ padding: 40, color: "var(--text-faint)" }}>Loading…</div>
+      </DashboardLayout>
     );
   }
 
@@ -93,19 +92,15 @@ export default function MyProfile() {
   };
 
   return (
-    <div className="fu-app" data-testid="my-profile-page">
-      <AppNav />
-      <div className="wrap" style={{ paddingTop: 28 }}>
-        <span className="eyebrow tick">Your identity</span>
-        <h1 className="oswald" style={{ fontSize: 30, color: "var(--navy)", margin: "8px 0 6px" }}>
-          Public profile
-        </h1>
-        <p style={{ color: "var(--text-dim)", maxWidth: 620, lineHeight: 1.6 }}>
-          This is what other verified members see. Your real name and credential references stay
-          private in your verified identity — they are never shown here, even to other members.
-        </p>
+    <DashboardLayout active="profile" testid="my-profile-page">
+      <span className="eyebrow tick">Your identity</span>
+      <h1 className="oswald dash-h">Public profile</h1>
+      <p className="dash-lede">
+        This is what other verified members see. Your real name and credential references stay
+        private in your verified identity — they are never shown here, even to other members.
+      </p>
 
-        <div className="profile-edit-grid">
+      <div className="profile-edit-grid">
           {/* Preview */}
           <div>
             <div className="pe-label">Live preview</div>
@@ -199,7 +194,6 @@ export default function MyProfile() {
         </div>
 
         <PaymentSettings />
-      </div>
-    </div>
+    </DashboardLayout>
   );
 }

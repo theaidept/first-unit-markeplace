@@ -27,15 +27,17 @@ export default function ForgotPassword() {
 
   return (
     <div className="auth-shell" data-testid="forgot-page">
-      <div className="auth-side" style={{ backgroundImage: `url(${IMG.verifySide})` }}>
+      <div className="auth-side" style={{ backgroundImage: `linear-gradient(155deg, rgba(11,31,66,.74), rgba(13,20,36,.9)), url(${IMG.verifySide})`, backgroundSize: "cover", backgroundPosition: "center" }}>
         <Brand light />
         <div>
-          <h2>Reset your password.</h2>
+          <h2>Reset Your Password</h2>
           <p>We'll email a secure link to reset your First Unit password. It expires in one hour.</p>
         </div>
-        <div />
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,.5)" }}>
+          Secure link · One hour to use it
+        </div>
       </div>
-      <div className="auth-main">
+      <div className="auth-main auth-panel">
         <div className="auth-card">
           <h1>Forgot password</h1>
           <p className="sub">Enter the email on your account.</p>
@@ -57,8 +59,10 @@ export default function ForgotPassword() {
               {loading ? "Sending…" : "Send reset link"}
             </button>
           </form>
-          <div className="auth-alt">
-            <Link to="/login" data-testid="back-to-login-link">Back to sign in</Link>
+          <div className="auth-foot">
+            <div className="auth-alt">
+              <Link to="/login" data-testid="back-to-login-link">Back to sign in</Link>
+            </div>
           </div>
         </div>
       </div>

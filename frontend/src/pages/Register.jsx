@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Brand } from "../components/Brand";
+import { AuthSocial } from "../components/AuthSocial";
 import { useAuth, formatApiErrorDetail } from "../context/AuthContext";
 import { IMG } from "../lib/assets";
 
@@ -47,7 +48,7 @@ export default function Register() {
         </div>
       </div>
 
-      <div className="auth-main">
+      <div className="auth-main auth-panel">
         <div className="auth-card">
           <h1>Verify & Join</h1>
           <p className="sub">Start with your account. Verification comes next.</p>
@@ -94,8 +95,11 @@ export default function Register() {
               {loading ? "Creating account…" : "Create account →"}
             </button>
           </form>
-          <div className="auth-alt">
-            Already verified? <Link to="/login" data-testid="to-login-link">Sign in</Link>
+          <AuthSocial testIdPrefix="register-social" />
+          <div className="auth-foot">
+            <div className="auth-alt">
+              Already have an account? <Link to="/login" data-testid="to-login-link">Sign in here</Link>
+            </div>
           </div>
         </div>
       </div>

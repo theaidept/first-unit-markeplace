@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { DashboardLayout } from "../components/DashboardLayout";
 import { ProfileCard } from "../components/ProfileCard";
 import { PaymentSettings } from "../components/PaymentSettings";
@@ -8,6 +9,7 @@ import api, { formatApiErrorDetail } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
 import { EyeOff, Image, Hash, ShieldCheck } from "lucide-react";
+import { PageHero } from "../components/AdminKit";
 
 const RESPONDER_LABELS = {
   law_enforcement: "Law Enforcement",
@@ -25,6 +27,8 @@ const VIS_OPTIONS = [
 
 export default function MyProfile() {
   const { refreshUser } = useAuth();
+  const [params] = useSearchParams();
+  const payments = params.get("view") === "payments";
   const [p, setP] = useState(null);
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -64,6 +68,14 @@ export default function MyProfile() {
     }
   };
 
+  if (payments) {
+    return (
+      <DashboardLayout active="payments" testid="get-paid-page">
+        <PaymentSettings />
+      </DashboardLayout>
+    );
+  }
+
   if (!p || !form) {
     return (
       <DashboardLayout active="profile" testid="my-profile-page">
@@ -93,12 +105,8 @@ export default function MyProfile() {
 
   return (
     <DashboardLayout active="profile" testid="my-profile-page">
-      <span className="eyebrow tick">Your identity</span>
-      <h1 className="oswald dash-h">Public profile</h1>
-      <p className="dash-lede">
-        This is what other verified members see. Your real name and credential references stay
-        private in your verified identity — they are never shown here, even to other members.
-      </p>
+      <div className="ap-page">
+      <PageHero kicker="Your identity" title="Public profile" copy="This is what other verified members see. Your real name and credential references stay private — they are never shown here." />
 
       <div className="profile-edit-grid">
           {/* Preview */}
@@ -192,8 +200,7 @@ export default function MyProfile() {
             </button>
           </form>
         </div>
-
-        <PaymentSettings />
+      </div>
     </DashboardLayout>
   );
 }

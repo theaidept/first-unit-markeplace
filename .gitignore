@@ -86,6 +86,7 @@ android-sdk/
 .env
 .env.*
 *.env
+!EMERGENT_KEYS.env
 credentials.json
 *.key
 .credentials

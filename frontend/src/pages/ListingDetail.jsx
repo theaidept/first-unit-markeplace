@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { AppNav } from "../components/AppNav";
 import { AvatarRing } from "../components/AvatarRing";
 import { VerifiedBadge } from "../components/VerifiedBadge";
-import { CATEGORY_LABELS } from "../components/ListingCard";
+import { useCategoryLabel } from "../lib/categoryIcons";
 import { StarRating } from "../components/StarRating";
 import { ratingFor } from "../lib/ratings";
 import { ReportDialog } from "../components/ReportDialog";
@@ -27,6 +27,7 @@ export default function ListingDetail() {
   const [meetup, setMeetup] = useState("");
   const [busy, setBusy] = useState(false);
   const [showReport, setShowReport] = useState(false);
+  const catLabel = useCategoryLabel(l?.category);
 
   const loadOffers = async () => {
     try {
@@ -160,7 +161,7 @@ export default function ListingDetail() {
             )}
             <div className="gallery-main">
               {photos[active] ? <img src={fileUrl(photos[active])} alt={l.title} onError={imgFallback} /> : <div className="lc-noimg">No photo</div>}
-              <span className="lc-cat">{CATEGORY_LABELS[l.category] || l.category}</span>
+              <span className="lc-cat">{catLabel}</span>
             </div>
             {photos.length > 1 && (
               <div className="gallery-thumbs">
@@ -205,12 +206,12 @@ export default function ListingDetail() {
                 {(() => { const r = ratingFor(l.id); return <StarRating value={r.value} count={r.count} size={16} />; })()}
               </div>
               <div className="detail-meta">
-                <span><Tag size={13} /> {CATEGORY_LABELS[l.category] || l.category}</span>
+                <span><Tag size={13} /> {catLabel}</span>
                 {l.location && <span><MapPin size={13} /> {l.location}</span>}
               </div>
               <div className="detail-fields">
                 <div className="df"><div className="df-k">Condition</div><div className="df-v">{l.condition}</div></div>
-                <div className="df"><div className="df-k">Category</div><div className="df-v">{CATEGORY_LABELS[l.category] || l.category}</div></div>
+                <div className="df"><div className="df-k">Category</div><div className="df-v">{catLabel}</div></div>
                 {l.location && <div className="df"><div className="df-k">Location</div><div className="df-v">{l.location}</div></div>}
               </div>
 

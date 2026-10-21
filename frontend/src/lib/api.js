@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const BASE = process.env.REACT_APP_BACKEND_URL;
+const BASE = process.env.REACT_APP_BACKEND_URL || "";
 
 export const BACKEND = BASE;
 export const fileUrl = (p) => (!p ? null : /^https?:\/\//.test(p) ? p : `${BASE}${p}`);

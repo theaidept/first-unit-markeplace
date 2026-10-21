@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Brand } from "../components/Brand";
+import { AuthSocial } from "../components/AuthSocial";
 import { useAuth, formatApiErrorDetail } from "../context/AuthContext";
 import { IMG } from "../lib/assets";
 
@@ -18,7 +19,8 @@ export default function Login() {
     setLoading(true);
     try {
       const u = await login(email, password);
-      if (u.verification_status === "approved") navigate("/marketplace");
+      if (u.role === "admin") navigate("/admin");
+      else if (u.verification_status === "approved") navigate("/marketplace");
       else navigate("/verification");
     } catch (err) {
       setError(formatApiErrorDetail(err.response?.data?.detail) || err.message);
@@ -43,7 +45,7 @@ export default function Login() {
         </div>
       </div>
 
-      <div className="auth-main">
+      <div className="auth-main auth-panel">
         <div className="auth-card">
           <h1>Sign in</h1>
           <p className="sub">Verified first responders only.</p>
@@ -79,13 +81,16 @@ export default function Login() {
               {loading ? "Signing in…" : "Sign in"}
             </button>
           </form>
-          <div className="auth-alt">
-            <Link to="/forgot-password" data-testid="forgot-link">
-              Forgot password?
-            </Link>
-          </div>
-          <div className="auth-alt">
-            New here? <Link to="/register" data-testid="to-register-link">Verify & join free</Link>
+          <AuthSocial testIdPrefix="login-social" />
+          <div className="auth-foot">
+            <div className="auth-alt">
+              <Link to="/forgot-password" data-testid="forgot-link">
+                Forgot password?
+              </Link>
+            </div>
+            <div className="auth-alt">
+              Don't have an account? <Link to="/register" data-testid="to-register-link">Sign up here</Link>
+            </div>
           </div>
         </div>
       </div>

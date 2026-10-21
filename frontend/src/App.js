@@ -18,10 +18,10 @@ import Members from "./pages/Members";
 import MemberProfile from "./pages/MemberProfile";
 import MyProfile from "./pages/MyProfile";
 import AdminPanel from "./pages/AdminPanel";
+import Shop from "./pages/Shop";
 import PaymentSuccess from "./pages/PaymentSuccess";
 import PaymentCancel from "./pages/PaymentCancel";
 import Messages from "./pages/Messages";
-import Thread from "./pages/Thread";
 import Dashboard from "./pages/Dashboard";
 
 function App() {
@@ -84,6 +84,14 @@ function App() {
             }
           />
           <Route
+            path="/shop/:sellerId"
+            element={
+              <RequireApproved>
+                <Shop />
+              </RequireApproved>
+            }
+          />
+          <Route
             path="/transactions"
             element={
               <RequireApproved>
@@ -131,22 +139,8 @@ function App() {
               </RequireApproved>
             }
           />
-          <Route
-            path="/messages"
-            element={
-              <RequireApproved>
-                <Messages />
-              </RequireApproved>
-            }
-          />
-          <Route
-            path="/messages/:threadId"
-            element={
-              <RequireApproved>
-                <Thread />
-              </RequireApproved>
-            }
-          />
+          <Route path="/messages" element={<RequireApproved><Messages /></RequireApproved>} />
+          <Route path="/messages/:threadId" element={<RequireApproved><Messages /></RequireApproved>} />
           <Route
             path="/admin"
             element={

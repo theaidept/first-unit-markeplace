@@ -15,8 +15,16 @@ const REPORT_REASONS = [
   { code: "other", label: "Other" },
 ];
 
-export default function Thread() {
-  const { threadId } = useParams();
+const stamp = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+};
+
+export function ThreadPane({ threadId: threadIdProp, onBack, showBack = false }) {
+  const params = useParams();
+  const threadId = threadIdProp || params.threadId;
   const navigate = useNavigate();
   const [thread, setThread] = useState(null);
   const [notFound, setNotFound] = useState(false);
@@ -85,14 +93,12 @@ export default function Thread() {
 
   if (notFound) {
     return (
-      <DashboardLayout active="messages" testid="thread-page">
-        <div style={{ maxWidth: 720 }}>
-          <div className="card" style={{ padding: 40, textAlign: "center" }}>
-            Conversation not found.
-            <div style={{ marginTop: 14 }}><Link to="/messages" className="btn btn-primary">Back to messages</Link></div>
-          </div>
+      <div className="card" style={{ padding: 40, textAlign: "center" }} data-testid="thread-missing">
+        Conversation not found.
+        <div style={{ marginTop: 14 }}>
+          <button type="button" className="btn btn-primary" onClick={() => (onBack ? onBack() : navigate("/messages"))}>Back to messages</button>
         </div>
-      </DashboardLayout>
+      </div>
     );
   }
 
@@ -100,13 +106,14 @@ export default function Thread() {
   const listing = thread?.listing || {};
 
   return (
-    <DashboardLayout active="messages" testid="thread-page">
-      <div style={{ maxWidth: 720 }}>
-        <button className="btn btn-ghost" onClick={() => navigate("/messages")} data-testid="thread-back-btn" style={{ marginBottom: 12 }}>
-          <ArrowLeft size={15} /> All messages
+    <div className="thread-pane" data-testid="thread-page">
+      {showBack && (
+        <button className="btn btn-ghost thread-back" onClick={() => (onBack ? onBack() : navigate("/messages"))} data-testid="thread-back-btn">
+          <ArrowLeft size={15} /> Messages
         </button>
+      )}
 
-        <div className="chat-shell card" data-testid="chat-shell">
+      <div className="chat-shell card" data-testid="chat-shell">
           {/* Header */}
           <div className="chat-header">
             <AvatarRing size="md" src={other.avatar} initials={other.initials} />
@@ -142,7 +149,11 @@ export default function Thread() {
             ) : (
               thread.messages.map((m) => (
                 <div className={`bubble-row ${m.mine ? "mine" : "theirs"}`} key={m.id} data-testid={`message-${m.id}`}>
-                  <div className="bubble">{m.body}</div>
+                  {!m.mine && <AvatarRing size="sm" src={other.avatar} initials={other.initials} />}
+                  <div className="bubble-col">
+                    <div className="bubble">{m.body}</div>
+                    <div className="bubble-time">{stamp(m.created_at)}</div>
+                  </div>
                 </div>
               ))
             )}
@@ -163,7 +174,6 @@ export default function Thread() {
             </button>
           </form>
         </div>
-      </div>
 
       {/* Report modal */}
       {showReport && (
@@ -193,6 +203,16 @@ export default function Thread() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+export default function Thread() {
+  return (
+    <DashboardLayout active="messages" testid="thread-page-standalone">
+      <div style={{ maxWidth: 760 }}>
+        <ThreadPane showBack />
+      </div>
     </DashboardLayout>
   );
 }

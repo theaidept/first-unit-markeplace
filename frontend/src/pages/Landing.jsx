@@ -1,3 +1,4 @@
+import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { motion, useReducedMotion } from "framer-motion";
 import {
@@ -9,12 +10,18 @@ import {
   Clock,
   Play,
   BadgeCheck,
+  ChevronLeft,
+  ChevronRight,
+  X,
   ShoppingBag,
+  Tag,
 } from "lucide-react";
 import { Brand } from "../components/Brand";
 import { VerifiedBadge } from "../components/VerifiedBadge";
 import { AvatarRing } from "../components/AvatarRing";
 import { Reveal } from "../components/Reveal";
+import { StoryViewer } from "../components/StoryViewer";
+import { Footer } from "../components/Footer";
 import { IMG, STORY_IMG } from "../lib/assets";
 
 const USPS = [
@@ -57,25 +64,70 @@ const STEPS = [
   { n: "04", t: "You're in", p: "Account activates on approval, with a text and email at every step." },
 ];
 
-const STORIES = [
-  ["Duty Belt Set", "$85"],
-  ["Academy Ring", "$310"],
-  ["Station Art Print", "$60"],
-  ["'19 Rescue Truck", "$41,000"],
-  ["Medic Bag — Full", "$150"],
-  ["Dispatch Headset", "$45"],
+const COLLAGE = [
+  STORY_IMG["Duty Belt Set"],
+  STORY_IMG["'19 Rescue Truck"],
+  "https://images.pexels.com/photos/34136293/pexels-photo-34136293.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
 ];
-const SEG = [3, 1, 2, 4, 2, 5];
+
+const STORIES = [
+  { id: "duty", title: "Duty Belt Set", price: 85, photo: STORY_IMG["Duty Belt Set"], handle: "Engine 14" },
+  { id: "ring", title: "Academy Ring", price: 310, photo: STORY_IMG["Academy Ring"], handle: "PD Unit 22" },
+  { id: "art", title: "Station Art Print", price: 60, photo: STORY_IMG["Station Art Print"], handle: "Station 9" },
+  { id: "truck", title: "'19 Rescue Truck", price: 41000, photo: STORY_IMG["'19 Rescue Truck"], handle: "Engine 14" },
+  { id: "medic", title: "Medic Bag — Full", price: 150, photo: STORY_IMG["Medic Bag — Full"], handle: "Station 9 EMS" },
+  { id: "headset", title: "Dispatch Headset", price: 45, photo: STORY_IMG["Dispatch Headset"], handle: "Dispatch 4" },
+].map((s) => ({ ...s, seller: { display_handle: s.handle, verified_badge: true } }));
 
 const CATS = [
-  ["Gear & Equipment", "1,204 listings", "c1"],
-  ["Vehicles", "86 listings", "c2"],
-  ["Art & Personal Items", "512 listings", "c3"],
-  ["Department Jobs", "39 open roles", "c4"],
+  ["Gear & Equipment", "1,204 listings", STORY_IMG["Duty Belt Set"]],
+  ["Vehicles", "86 listings", STORY_IMG["'19 Rescue Truck"]],
+  ["Art & Personal Items", "512 listings", STORY_IMG["Academy Ring"]],
+  ["Department Jobs", "39 open roles", "https://images.pexels.com/photos/34136293/pexels-photo-34136293.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"],
 ];
+
+const COMMUNITY_IMG = "https://images.unsplash.com/photo-1637590110484-03778d227a0d?auto=format&fit=crop&w=1800&q=80";
+
+function StoryRail({ onOpen }) {
+  const scroller = useRef(null);
+  const nudge = (dir) => {
+    const el = scroller.current;
+    if (!el) return;
+    const card = el.querySelector(".story-card");
+    const step = (card ? card.offsetWidth : 92) + 28;
+    el.scrollBy({ left: dir * step, behavior: "smooth" });
+  };
+  return (
+    <div className="slide-rail landing-stories">
+      <button type="button" className="slide-arrow prev" aria-label="Previous stories" onClick={() => nudge(-1)}>
+        <ChevronLeft size={18} />
+      </button>
+      <div className="slide-viewport" ref={scroller}>
+        <div className="landing-story-track">
+          {STORIES.map((s, i) => (
+            <button className="story-card" key={s.id} onClick={() => onOpen(i)} data-testid={`landing-story-${s.id}`}>
+              <span className="sc-ring">
+                <span className="sc-thumb" style={{ backgroundImage: `url(${s.photo})` }}>
+                  <span className="sc-play"><Play size={16} fill="currentColor" /></span>
+                </span>
+              </span>
+              <span className="sc-handle">{s.handle}</span>
+              <span className="sc-price">${s.price.toLocaleString()}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <button type="button" className="slide-arrow next" aria-label="Next stories" onClick={() => nudge(1)}>
+        <ChevronRight size={18} />
+      </button>
+    </div>
+  );
+}
 
 export default function Landing() {
   const reduce = useReducedMotion();
+  const [viewer, setViewer] = useState(null);
+  const [watch, setWatch] = useState(false);
   return (
     <div className="fu-app" data-testid="landing-page">
       <header className="site-header">
@@ -135,8 +187,11 @@ export default function Landing() {
             </div>
           </motion.div>
 
-          <motion.div
+          <motion.button
+            type="button"
             className="hero-card"
+            data-testid="hero-watch"
+            onClick={() => setWatch(true)}
             initial={reduce ? false : { opacity: 0, y: 30 }}
             animate={reduce ? false : { opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.15 }}
@@ -147,6 +202,7 @@ export default function Landing() {
               <span />
             </div>
             <div className="media" style={{ backgroundImage: `url(${IMG.heroGear})` }}>
+              <span className="hero-play" aria-hidden><Play size={26} fill="currentColor" /></span>
               <div className="play-pill">
                 <span className="dot" />
                 WATCH LISTING
@@ -160,7 +216,7 @@ export default function Landing() {
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <AvatarRing size="sm" />
                 <div>
-                  <div style={{ fontSize: 12.5, fontWeight: 600 }}>Engine 14 · Firefighter</div>
+                  <div className="hero-seller-name">Engine 14 · Firefighter</div>
                   <VerifiedBadge />
                 </div>
               </div>
@@ -170,7 +226,7 @@ export default function Landing() {
             <div className="hc-badge" aria-hidden>
               <ShieldCheck size={22} />
             </div>
-          </motion.div>
+          </motion.button>
         </div>
       </section>
 
@@ -189,12 +245,19 @@ export default function Landing() {
           <div className="why-bento">
             {/* Feature: verification */}
             <Reveal className="bento feature">
-              <div className="ico">
-                <ShieldCheck />
+              <div className="feature-copy">
+                <div className="ico">
+                  <ShieldCheck />
+                </div>
+                <h3>{USPS[0].title}</h3>
+                <p>{USPS[0].body}</p>
+                <VerifiedBadge label="Every member verified" />
               </div>
-              <h3>{USPS[0].title}</h3>
-              <p>{USPS[0].body}</p>
-              <VerifiedBadge label="Every member verified" />
+              <div className="feature-collage" aria-hidden>
+                {COLLAGE.map((src) => (
+                  <img key={src} src={src} alt="" />
+                ))}
+              </div>
             </Reveal>
 
             <Reveal className="bento" delay={0.05}>
@@ -252,38 +315,7 @@ export default function Landing() {
             <span className="eyebrow tick">Featured this week</span>
             <h2>Tap a story, watch the listing.</h2>
           </Reveal>
-          <Reveal className="reel">
-            {STORIES.map(([name, price], i) => (
-              <div className="sreel" key={name}>
-                <div className="thumb" style={{ backgroundImage: `url(${STORY_IMG[name]})` }} />
-                <div className="s-progress" aria-hidden>
-                  {Array.from({ length: 5 }).map((_, k) => (
-                    <i key={k} className={k < SEG[i] ? "on" : ""} />
-                  ))}
-                </div>
-                <div className="s-top">
-                  <AvatarRing size="sm" />
-                  {i === 0 && (
-                    <span className="live">
-                      <span className="dot" /> LIVE
-                    </span>
-                  )}
-                </div>
-                <div className="play" aria-hidden>
-                  <Play size={20} fill="currentColor" />
-                </div>
-                <div className="s-foot">
-                  <div className="nm">{name}</div>
-                  <div className="row">
-                    <div className="pr">{price}</div>
-                    <div className="shop" aria-hidden>
-                      <ShoppingBag size={15} />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </Reveal>
+          <StoryRail onOpen={setViewer} />
         </div>
       </section>
 
@@ -309,11 +341,9 @@ export default function Landing() {
       </section>
 
       {/* COMMUNITY BAND */}
-      <section
-        className="community-band pull-up"
-        style={{ backgroundImage: `url(${IMG.heroGroup})` }}
-      >
-        <span className="grain" aria-hidden />
+      <section className="community-band pull-up">
+        <img className="cb-photo" src={COMMUNITY_IMG} alt="" />
+        <span className="cb-shade" aria-hidden />
         <div className="wrap">
           <span className="eyebrow tick" style={{ color: "#ff8090" }}>
             One community
@@ -340,13 +370,16 @@ export default function Landing() {
             </p>
           </Reveal>
           <div className="cats-strip">
-            {CATS.map(([name, count, c], i) => (
+            {CATS.map(([name, count, photo], i) => (
               <Reveal key={name} delay={i * 0.06}>
-                <div className={`cat-tile ${c}`}>
-                  <div>
-                    <b>{name}</b>
-                    <span>{count}</span>
-                  </div>
+                <div className="cat-tile">
+                  <span className="ct-img">
+                    <img src={photo} alt="" />
+                    <span className="ct-copy">
+                      <span className="ct-label">{name}</span>
+                      <span className="ct-count">{count}</span>
+                    </span>
+                  </span>
                 </div>
               </Reveal>
             ))}
@@ -358,7 +391,7 @@ export default function Landing() {
       <section className="cta-band">
         <span className="grain" aria-hidden />
         <div className="wrap">
-          <span className="eyebrow tick" style={{ color: "#ff8090" }}>
+          <span className="eyebrow tick">
             Join the founding circle
           </span>
           <h2>
@@ -366,18 +399,44 @@ export default function Landing() {
             <br />
             Now trade inside it.
           </h2>
+          <p className="cta-support">
+            Verification is free for active and retired law enforcement, fire, EMS, and dispatch. No civilians.
+          </p>
           <Link to="/register" className="btn btn-primary" data-testid="cta-start-btn">
             Start Verification →
           </Link>
         </div>
       </section>
 
-      <footer className="site-footer">
-        <div className="wrap row">
-          <Brand light />
-          <div>© {new Date().getFullYear()} First Unit — Verified first responders only.</div>
+      <Footer />
+      {viewer !== null && (
+        <StoryViewer stories={STORIES} index={viewer} onClose={() => setViewer(null)} onIndex={setViewer} />
+      )}
+      {watch && (
+        <div className="watch-modal" data-testid="hero-video-modal" onClick={() => setWatch(false)}>
+          <div className="watch-frame" onClick={(e) => e.stopPropagation()}>
+            <button type="button" className="watch-close" onClick={() => setWatch(false)} aria-label="Close video" data-testid="hero-video-close"><X size={18} /></button>
+            <div className="watch-video">
+              <iframe
+                title="Turnout Gear listing video"
+                src="https://www.youtube.com/embed/Xy-UQ-J9mhs?autoplay=1&rel=0&modestbranding=1&playsinline=1"
+                allow="autoplay; encrypted-media; picture-in-picture"
+                allowFullScreen
+              />
+            </div>
+            <div className="watch-meta">
+              <div>
+                <div className="watch-title">Turnout Gear — Size L</div>
+                <div className="watch-price">$240</div>
+              </div>
+              <div className="watch-actions">
+                <Link to="/login" className="btn btn-primary" data-testid="hero-buy-now"><ShoppingBag size={15} /> Buy Now</Link>
+                <Link to="/login" className="btn btn-ghost" data-testid="hero-offer"><Tag size={15} /> Offer</Link>
+              </div>
+            </div>
+          </div>
         </div>
-      </footer>
+      )}
     </div>
   );
 }

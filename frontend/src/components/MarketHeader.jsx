@@ -2,24 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { AvatarRing } from "./AvatarRing";
-import { VerifiedBadge } from "./VerifiedBadge";
 import api from "../lib/api";
 import logo from "../assets/logo.png";
 import { Search, ShoppingBag, MessageSquare, Bell, LayoutDashboard, ShieldCheck, LogOut, ChevronDown, Package, Tag, UserCircle } from "lucide-react";
 
-const CATS = [
-  { key: "all", label: "All Categories" },
-  { key: "gear", label: "Gear & Equipment" },
-  { key: "vehicles", label: "Vehicles" },
-  { key: "art", label: "Art & Personal" },
-  { key: "jobs", label: "Department Jobs" },
-];
-
-const NAV = [
-  { key: "all", label: "All Categories" },
-  { key: "gear", label: "Gear & Equipment" },
-  { key: "vehicles", label: "Vehicles" },
-  { key: "art", label: "Art & Personal" },
+const EXTRA_NAV = [
   { key: "jobs", label: "Department Jobs" },
   { key: "deals", label: "Deals" },
   { key: "near", label: "Near Me" },
@@ -35,7 +22,16 @@ export const MarketHeader = ({ onSearch, onNav, activeNav, showNav = true }) => 
   const [alerts, setAlerts] = useState(0);
   const [me, setMe] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [shopCats, setShopCats] = useState([
+    { slug: "gear", name: "Gear & Equipment" },
+    { slug: "vehicles", name: "Vehicles" },
+    { slug: "art", name: "Art & Personal Items" },
+  ]);
   const menuRef = useRef(null);
+
+  useEffect(() => {
+    api.get("/categories").then((r) => { if (r.data.categories?.length) setShopCats(r.data.categories); }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     const onDoc = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false); };
@@ -65,6 +61,8 @@ export const MarketHeader = ({ onSearch, onNav, activeNav, showNav = true }) => 
     else navigate(`/marketplace?q=${encodeURIComponent(q)}&cat=${cat}`);
   };
 
+  const welcomeName = me?.display_handle || user?.email?.split("@")[0] || "there";
+
   const goNav = (key) => {
     if (key === "jobs") { navigate("/dashboard?view=jobs"); return; }
     if (onNav) onNav(key);
@@ -87,7 +85,9 @@ export const MarketHeader = ({ onSearch, onNav, activeNav, showNav = true }) => 
 
           <form className="mh-search" onSubmit={submit} data-testid="mh-search">
             <select value={cat} onChange={(e) => setCat(e.target.value)} data-testid="mh-search-cat">
-              {CATS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+              <option value="all">All Categories</option>
+              {shopCats.map((c) => <option key={c.slug} value={c.slug}>{c.name}</option>)}
+              <option value="jobs">Department Jobs</option>
             </select>
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search gear, vehicles, art…" data-testid="mh-search-input" />
             <button type="submit" data-testid="mh-search-btn"><Search size={17} /></button>
@@ -105,14 +105,13 @@ export const MarketHeader = ({ onSearch, onNav, activeNav, showNav = true }) => 
             <Link to="/dashboard" className="btn btn-ghost mh-dash" data-testid="mh-dashboard-btn"><LayoutDashboard size={15} /> <span>Dashboard</span></Link>
             {user?.role === "admin" && <Link to="/admin" className="mh-icon" title="Admin" data-testid="mh-admin"><ShieldCheck size={19} /></Link>}
             <div className="mh-chip-wrap" ref={menuRef}>
-              <button className="mh-chip" data-testid="mh-profile-chip" onClick={() => setMenuOpen((o) => !o)}>
+              <button className="mh-chip" data-testid="mh-profile-chip" onClick={() => setMenuOpen((o) => !o)} aria-label="Account menu">
                 <AvatarRing size="sm" src={me?.photo_visibility === "photo" ? me?.avatar : null} initials={me?.initials} />
-                <span className="mh-chip-name">{me?.display_handle || user?.email?.split("@")[0]}</span>
-                {(me?.verified_badge ?? user?.verification_status === "approved") && <VerifiedBadge />}
                 <ChevronDown size={14} className={`mh-caret ${menuOpen ? "up" : ""}`} />
               </button>
               {menuOpen && (
                 <div className="mh-menu" data-testid="mh-profile-menu" onClick={() => setMenuOpen(false)}>
+                  <div className="mh-menu-welcome" data-testid="mh-menu-welcome">Welcome, {welcomeName}</div>
                   <Link to="/profile" data-testid="mh-menu-profile"><UserCircle size={15} /> Profile</Link>
                   <Link to="/dashboard" data-testid="mh-menu-listings"><Package size={15} /> My Listings</Link>
                   <Link to="/transactions" data-testid="mh-menu-orders"><Tag size={15} /> Orders &amp; Offers</Link>
@@ -128,7 +127,7 @@ export const MarketHeader = ({ onSearch, onNav, activeNav, showNav = true }) => 
       {showNav && (
         <nav className="mh-nav" data-testid="mh-nav">
           <div className="wrap mh-nav-row">
-            {NAV.map((n) => (
+            {[{ key: "all", label: "All Categories" }, ...shopCats.map((c) => ({ key: c.slug, label: c.name })), ...EXTRA_NAV].map((n) => (
               <button key={n.key} className={activeNav === n.key ? "active" : ""} onClick={() => goNav(n.key)} data-testid={`mh-nav-${n.key}`}>{n.label}</button>
             ))}
             <Link to="/sell" className="mh-nav-list" data-testid="mh-nav-list-item">List an item</Link>

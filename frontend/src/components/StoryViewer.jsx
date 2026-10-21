@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { fileUrl } from "../lib/api";
+import { openAd, trackView } from "../lib/ads";
 import { VerifiedBadge } from "./VerifiedBadge";
 import { AvatarRing } from "./AvatarRing";
-import { X, ShoppingBag, ChevronLeft, ChevronRight, Play, Volume2, VolumeX } from "lucide-react";
+import { X, ShoppingBag, ChevronLeft, ChevronRight, Play, Volume2, VolumeX, Tag } from "lucide-react";
 
 const SWIPE = 45; // px threshold to register a swipe
 
 export const StoryViewer = ({ stories, index, onClose, onIndex }) => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const reduce = useReducedMotion();
   const videoRef = useRef(null);
   const touch = useRef({ x: 0, y: 0, t: 0, moved: false });
@@ -17,6 +20,7 @@ export const StoryViewer = ({ stories, index, onClose, onIndex }) => {
   const [paused, setPaused] = useState(false);
   const [muted, setMuted] = useState(false);
   const [dir, setDir] = useState(1); // 1 = forward, -1 = back
+  const progressRef = useRef(0);
 
   const s = stories[index];
 
@@ -38,9 +42,31 @@ export const StoryViewer = ({ stories, index, onClose, onIndex }) => {
 
   // Reset transient state whenever the active story changes.
   useEffect(() => {
+    progressRef.current = 0;
     setProgress(0);
     setPaused(false);
-  }, [index]);
+    const cur = stories[index];
+    if (cur?.ad) trackView(cur.ad);
+  }, [index, stories]);
+
+  // Photo-only stories (landing reel) advance on a timer. Video stories use playback time.
+  useEffect(() => {
+    const current = stories[index];
+    if (!current || current.video || paused) return undefined;
+    const startProgress = progressRef.current;
+    const started = Date.now();
+    let done = false;
+    const id = setInterval(() => {
+      const p = Math.min(1, startProgress + (Date.now() - started) / 5000);
+      progressRef.current = p;
+      setProgress(p);
+      if (p >= 1 && !done) {
+        done = true;
+        next();
+      }
+    }, 80);
+    return () => clearInterval(id);
+  }, [index, paused, stories, next]);
 
   // Keyboard navigation.
   useEffect(() => {
@@ -57,15 +83,19 @@ export const StoryViewer = ({ stories, index, onClose, onIndex }) => {
 
   if (!s) return null;
   const seller = s.seller || {};
+  const isAd = Boolean(s.ad || s.kind === "ad");
 
-  const go = () => {
+  const shop = () => {
     onClose();
-    navigate(`/listing/${s.listing_id}`);
+    if (isAd) { openAd(s.ad, navigate); return; }
+    if (!user) navigate("/login");
+    else if (s.listing_id) navigate(`/listing/${s.listing_id}`);
+    else navigate("/marketplace");
   };
 
   const togglePlay = () => {
     const v = videoRef.current;
-    if (!v) return;
+    if (!v) { setPaused((p) => !p); return; }
     if (v.paused) { v.play(); setPaused(false); } else { v.pause(); setPaused(true); }
   };
 
@@ -139,20 +169,24 @@ export const StoryViewer = ({ stories, index, onClose, onIndex }) => {
             exit="exit"
             transition={reduce ? { duration: 0.15 } : { type: "tween", ease: [0.22, 1, 0.36, 1], duration: 0.32 }}
           >
-            <video
-              ref={videoRef}
-              src={fileUrl(s.video)}
-              autoPlay
-              playsInline
-              muted={muted}
-              className="story-video"
-              data-testid="story-video"
-              poster={s.photo ? fileUrl(s.photo) : undefined}
-              onTimeUpdate={onTimeUpdate}
-              onEnded={next}
-              onPlay={() => setPaused(false)}
-              onPause={() => setPaused(true)}
-            />
+            {s.video ? (
+              <video
+                ref={videoRef}
+                src={fileUrl(s.video)}
+                autoPlay
+                playsInline
+                muted={muted}
+                className="story-video"
+                data-testid="story-video"
+                poster={s.photo ? fileUrl(s.photo) : undefined}
+                onTimeUpdate={onTimeUpdate}
+                onEnded={next}
+                onPlay={() => setPaused(false)}
+                onPause={() => setPaused(true)}
+              />
+            ) : (
+              <img className="story-video" alt="" src={fileUrl(s.photo) || undefined} data-testid="story-photo" />
+            )}
 
             {/* Tap zones: left=prev, center=play/pause, right=next */}
             <div className="story-zones">
@@ -167,6 +201,7 @@ export const StoryViewer = ({ stories, index, onClose, onIndex }) => {
                 <AvatarRing size="sm" src={seller.avatar} />
                 <span>{seller.display_handle}</span>
                 {seller.verified_badge && <VerifiedBadge />}
+                {isAd && <span className="native-ad-badge sm">Sponsored</span>}
               </div>
               <motion.div
                 className="story-buy-card"
@@ -179,11 +214,20 @@ export const StoryViewer = ({ stories, index, onClose, onIndex }) => {
                 <div className="sbc-thumb" style={{ backgroundImage: s.photo ? `url(${fileUrl(s.photo)})` : undefined }} />
                 <div className="sbc-info">
                   <div className="so-title">{s.title}</div>
-                  <div className="so-price">${Number(s.price).toLocaleString()}</div>
+                  {s.price ? <div className="so-price">${Number(s.price).toLocaleString()}</div> : null}
                 </div>
-                <button className="btn btn-primary sbc-btn" onClick={go} data-testid="story-shop-btn">
-                  <ShoppingBag size={15} /> View &amp; Buy
-                </button>
+                {(!isAd || s.ad?.show_cta === true) && (
+                  <div className="sbc-actions">
+                    <button className="btn btn-primary sbc-btn" onClick={shop} data-testid="story-buy-btn">
+                      <ShoppingBag size={14} /> {isAd ? (s.ad?.cta || "Shop now") : "Buy Now"}
+                    </button>
+                    {!isAd && (
+                      <button className="btn btn-ghost sbc-btn" onClick={shop} data-testid="story-offer-btn">
+                        <Tag size={14} /> Offer
+                      </button>
+                    )}
+                  </div>
+                )}
               </motion.div>
             </div>
           </motion.div>

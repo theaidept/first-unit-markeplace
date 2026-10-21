@@ -3,6 +3,7 @@ import { DashboardLayout } from "../components/DashboardLayout";
 import { ProfileCard } from "../components/ProfileCard";
 import api from "../lib/api";
 import { Users } from "lucide-react";
+import { PageHero, Empty } from "../components/AdminKit";
 
 export default function Members() {
   const [members, setMembers] = useState(null);
@@ -13,19 +14,13 @@ export default function Members() {
 
   return (
     <DashboardLayout active="members" testid="members-page">
-      <span className="eyebrow tick">The circle</span>
-      <h1 className="oswald dash-h">Verified members</h1>
-      <p className="dash-lede">
-        Everyone here is a verified active or retired first responder. Undercover members appear
-        anonymously — still fully verified.
-      </p>
+      <div className="ap-page">
+      <PageHero kicker="The circle" title="Verified members" copy="Everyone here is a verified active or retired first responder. Undercover members appear anonymously — still fully verified." />
 
       {members === null ? (
         <div style={{ padding: 40, color: "var(--text-faint)" }}>Loading…</div>
       ) : members.length === 0 ? (
-        <div className="card" style={{ padding: 30, display: "flex", gap: 14, alignItems: "center", color: "var(--text-dim)" }}>
-          <Users size={22} color="var(--navy)" /> No verified members yet.
-        </div>
+        <Empty icon={Users} title="No verified members yet" />
       ) : (
         <div className="members-grid" data-testid="members-grid">
           {members.map((m) => (
@@ -33,6 +28,7 @@ export default function Members() {
           ))}
         </div>
       )}
+      </div>
     </DashboardLayout>
   );
 }

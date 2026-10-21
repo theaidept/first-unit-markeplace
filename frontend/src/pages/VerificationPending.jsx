@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Brand } from "../components/Brand";
 import { useAuth } from "../context/AuthContext";
 import api, { formatApiErrorDetail } from "../lib/api";
@@ -50,12 +50,14 @@ export default function VerificationPending() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
-  const load = async () => {
+  const load = async ({ bounceIfApproved = false } = {}) => {
     try {
       const res = await api.get("/verification/me");
       setData(res.data);
       const fresh = await refreshUser();
-      if (fresh && fresh.verification_status === "approved") navigate("/marketplace");
+      // Stay on this page when an already-verified member opens it from the
+      // dashboard. Only bounce after a fresh approval from submit.
+      if (bounceIfApproved && fresh && fresh.verification_status === "approved") navigate("/marketplace");
     } catch {
       /* ignore */
     }
@@ -91,7 +93,7 @@ export default function VerificationPending() {
         rejected: "Verification was not approved.",
       };
       toast.success(map[res.verification_status] || "Submitted");
-      await load();
+      await load({ bounceIfApproved: res.verification_status === "approved" });
     } catch (err) {
       setError(formatApiErrorDetail(err.response?.data?.detail) || err.message);
     } finally {
@@ -239,6 +241,13 @@ export default function VerificationPending() {
                 <div className="st-sub">{copy.sub}</div>
               </div>
             </div>
+            {status === "approved" && (
+              <div style={{ marginTop: 18 }}>
+                <Link to="/marketplace" className="btn btn-primary" data-testid="verification-marketplace-btn">
+                  Open marketplace
+                </Link>
+              </div>
+            )}
           </>
         )}
 

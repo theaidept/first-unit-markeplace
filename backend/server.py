@@ -25,9 +25,10 @@ import requests
 import stripe
 from providers import get_provider, pkce_pair
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, UploadFile, File, Query, Header
+from fastapi.responses import RedirectResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 # ---------------------------------------------------------------------------
 # Config / DB
@@ -689,6 +690,174 @@ async def forgot_password(body: ForgotBody):
     return {"status": "ok", "message": "If that account exists, a reset link has been sent."}
 
 
+def _placed_key(name: str) -> str:
+    """A real secret. Placeholder text in EMERGENT_KEYS.env does not count."""
+    value = (os.environ.get(name) or "").strip()
+    if not value or value.startswith("PASTE_"):
+        return ""
+    return value
+
+
+def _public_base() -> str:
+    return (os.environ.get("PUBLIC_URL") or FRONTEND_URL).rstrip("/")
+
+
+def _social_ready(provider: str) -> bool:
+    if provider == "google":
+        return bool(_placed_key("GOOGLE_CLIENT_ID") and _placed_key("GOOGLE_CLIENT_SECRET"))
+    if provider == "microsoft":
+        return bool(_placed_key("MICROSOFT_CLIENT_ID") and _placed_key("MICROSOFT_CLIENT_SECRET"))
+    if provider == "apple":
+        return bool(_placed_key("APPLE_CLIENT_ID") and _placed_key("APPLE_TEAM_ID") and _placed_key("APPLE_KEY_ID") and _placed_key("APPLE_PRIVATE_KEY"))
+    return False
+
+
+@api.get("/auth/providers")
+async def auth_providers():
+    return {
+        "google": _social_ready("google"),
+        "apple": _social_ready("apple"),
+        "microsoft": _social_ready("microsoft"),
+        "paypal": bool(_placed_key("PAYPAL_CLIENT_ID") and _placed_key("PAYPAL_SECRET")),
+        "stripe": bool(_placed_key("STRIPE_SECRET_KEY")),
+        "email": bool(_placed_key("EMERGENT_EMAIL_KEY")),
+    }
+
+
+@api.get("/auth/{provider}/start")
+async def social_start(provider: str):
+    if provider not in ("google", "apple", "microsoft"):
+        raise HTTPException(status_code=404, detail="Unknown sign-in provider")
+    if not _social_ready(provider):
+        raise HTTPException(status_code=503, detail=f"{provider} keys are not set yet. Paste them in EMERGENT_KEYS.env")
+    state = secrets.token_urlsafe(24)
+    await db.oauth_states.insert_one({
+        "state": state, "provider": provider, "purpose": "login",
+        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+    })
+    redirect_uri = f"{_public_base()}/api/auth/{provider}/callback"
+    if provider == "google":
+        url = (
+            "https://accounts.google.com/o/oauth2/v2/auth"
+            f"?client_id={quote(_placed_key('GOOGLE_CLIENT_ID'))}"
+            f"&redirect_uri={quote(redirect_uri)}&response_type=code&scope=openid%20email%20profile&state={state}"
+        )
+    elif provider == "microsoft":
+        url = (
+            "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+            f"?client_id={quote(_placed_key('MICROSOFT_CLIENT_ID'))}"
+            f"&redirect_uri={quote(redirect_uri)}&response_type=code&response_mode=query"
+            f"&scope=openid%20email%20profile%20User.Read&state={state}"
+        )
+    else:
+        url = (
+            "https://appleid.apple.com/auth/authorize"
+            f"?client_id={quote(_placed_key('APPLE_CLIENT_ID'))}"
+            f"&redirect_uri={quote(redirect_uri)}&response_type=code&response_mode=form_post"
+            f"&scope=name%20email&state={state}"
+        )
+    return RedirectResponse(url)
+
+
+async def _finish_social(email: str, provider: str, provider_id: str) -> RedirectResponse:
+    email = (email or "").lower().strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="That provider did not return an email")
+    user = await db.users.find_one({"email": email})
+    if not user:
+        uid = str(uuid.uuid4())
+        user = {
+            "id": uid, "email": email, "password_hash": hash_password(secrets.token_urlsafe(32)),
+            "phone": "", "role": "member", "responder_type": None, "service_status": None,
+            "verification_status": "unverified", "paypal_ref": None, "venmo_handle": None,
+            "auth_provider": provider, f"{provider}_id": provider_id, "created_at": now_iso(),
+        }
+        await db.users.insert_one(user)
+        await db.profiles.insert_one({
+            "id": str(uuid.uuid4()), "user_id": uid, "display_handle": email.split("@")[0],
+            "avatar": None, "agency": None, "rank": None, "years_of_service": None,
+            "verified_badge": False, "photo_visibility": "avatar", "undercover": False, "created_at": now_iso(),
+        })
+        vid = str(uuid.uuid4())
+        await db.verification_records.insert_one({
+            "id": vid, "user_id": uid, "current_state": "unverified", "provider": None,
+            "provider_reference": None, "outcome": None, "created_at": now_iso(), "updated_at": now_iso(),
+        })
+        await log_verification_event(vid, f"Account created with {provider}", "System", "Received")
+    else:
+        await db.users.update_one({"id": user["id"]}, {"$set": {"auth_provider": provider, f"{provider}_id": provider_id}})
+    dest = "/admin" if user.get("role") == "admin" else ("/marketplace" if user.get("verification_status") == "approved" else "/verification")
+    resp = RedirectResponse(f"{FRONTEND_URL}{dest}", status_code=302)
+    set_auth_cookies(resp, create_access_token(user["id"], email), create_refresh_token(user["id"]))
+    return resp
+
+
+async def _social_email(provider: str, code: str) -> tuple:
+    redirect_uri = f"{_public_base()}/api/auth/{provider}/callback"
+    async with httpx.AsyncClient(timeout=20) as c:
+        if provider == "google":
+            token = await c.post("https://oauth2.googleapis.com/token", data={
+                "code": code, "client_id": _placed_key("GOOGLE_CLIENT_ID"),
+                "client_secret": _placed_key("GOOGLE_CLIENT_SECRET"),
+                "redirect_uri": redirect_uri, "grant_type": "authorization_code",
+            })
+            token.raise_for_status()
+            info = await c.get("https://www.googleapis.com/oauth2/v3/userinfo",
+                               headers={"Authorization": f"Bearer {token.json()['access_token']}"})
+            info.raise_for_status()
+            body = info.json()
+            return body.get("email"), body.get("sub")
+        if provider == "microsoft":
+            token = await c.post("https://login.microsoftonline.com/common/oauth2/v2.0/token", data={
+                "code": code, "client_id": _placed_key("MICROSOFT_CLIENT_ID"),
+                "client_secret": _placed_key("MICROSOFT_CLIENT_SECRET"),
+                "redirect_uri": redirect_uri, "grant_type": "authorization_code",
+            })
+            token.raise_for_status()
+            info = await c.get("https://graph.microsoft.com/v1.0/me",
+                               headers={"Authorization": f"Bearer {token.json()['access_token']}"})
+            info.raise_for_status()
+            body = info.json()
+            return body.get("mail") or body.get("userPrincipalName"), body.get("id")
+        if provider == "apple":
+            pem = _placed_key("APPLE_PRIVATE_KEY").replace("\\n", "\n")
+            issued = int(datetime.now(timezone.utc).timestamp())
+            client_secret = jwt.encode(
+                {"iss": _placed_key("APPLE_TEAM_ID"), "iat": issued, "exp": issued + 3600,
+                 "aud": "https://appleid.apple.com", "sub": _placed_key("APPLE_CLIENT_ID")},
+                pem, algorithm="ES256", headers={"kid": _placed_key("APPLE_KEY_ID")},
+            )
+            token = await c.post("https://appleid.apple.com/auth/token", data={
+                "code": code, "client_id": _placed_key("APPLE_CLIENT_ID"),
+                "client_secret": client_secret, "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            })
+            token.raise_for_status()
+            claims = jwt.decode(token.json().get("id_token", ""), options={"verify_signature": False})
+            return claims.get("email"), claims.get("sub")
+    raise HTTPException(status_code=400, detail="Unsupported provider")
+
+
+async def _complete_social(provider: str, code: str, state: str):
+    saved = await db.oauth_states.find_one({"state": state, "provider": provider, "purpose": "login"})
+    if not saved:
+        raise HTTPException(status_code=400, detail="Sign-in expired. Try again.")
+    await db.oauth_states.delete_one({"state": state})
+    email, pid = await _social_email(provider, code)
+    return await _finish_social(email, provider, pid or "")
+
+
+@api.get("/auth/{provider}/callback")
+async def social_callback(provider: str, code: str = "", state: str = ""):
+    return await _complete_social(provider, code, state)
+
+
+@api.post("/auth/{provider}/callback")
+async def social_callback_post(provider: str, request: Request):
+    form = await request.form()
+    return await _complete_social(provider, str(form.get("code") or ""), str(form.get("state") or ""))
+
+
 @api.post("/auth/reset-password")
 async def reset_password(body: ResetBody):
     rec = await db.password_reset_tokens.find_one({"token": body.token})
@@ -813,7 +982,24 @@ async def get_profile(user_id: str, user: dict = Depends(require_verified)):
 @api.get("/admin/users")
 async def admin_list_users(admin: dict = Depends(require_admin)):
     users = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(1000)
-    return {"users": users}
+    ids = [u["id"] for u in users]
+    profiles = await db.profiles.find({"user_id": {"$in": ids}}, {"_id": 0}).to_list(1000) if ids else []
+    pmap = {p.get("user_id"): p for p in profiles}
+    out = []
+    for u in users:
+        p = pmap.get(u["id"]) or {}
+        handle = p.get("display_handle") or (u.get("email") or "").split("@")[0]
+        out.append({
+            **u,
+            "display_handle": handle,
+            "avatar": p.get("avatar"),
+            "initials": _initials(handle),
+            "agency": p.get("agency"),
+            "undercover": bool(p.get("undercover")),
+            "paypal_connected": bool(u.get("paypal_me") or u.get("paypal_email") or u.get("paypal_ref")),
+            "venmo_handle": u.get("venmo_handle"),
+        })
+    return {"users": out}
 
 
 @api.post("/admin/users/{user_id}/verification-status")
@@ -931,6 +1117,8 @@ async def admin_verification_queue(admin: dict = Depends(require_admin)):
         u = await db.users.find_one({"id": rec["user_id"]}, {"_id": 0, "password_hash": 0})
         if not u:
             continue
+        p = await db.profiles.find_one({"user_id": rec["user_id"]}, {"_id": 0}) or {}
+        handle = p.get("display_handle") or (u.get("email") or "").split("@")[0]
         out.append({
             "user_id": rec["user_id"],
             "email": u["email"],
@@ -940,6 +1128,9 @@ async def admin_verification_queue(admin: dict = Depends(require_admin)):
             "provider_reference": rec.get("provider_reference"),
             "prescreen": rec.get("prescreen"),
             "updated_at": rec.get("updated_at"),
+            "display_handle": handle,
+            "avatar": p.get("avatar"),
+            "initials": _initials(handle),
         })
     return {"queue": out}
 
@@ -988,6 +1179,74 @@ _storage_key = None
 
 IMAGE_MIME = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
 VIDEO_MIME = {"mp4": "video/mp4", "mov": "video/quicktime", "webm": "video/webm", "m4v": "video/x-m4v"}
+LOCAL_UPLOAD_DIR = Path(os.environ.get("LOCAL_UPLOAD_DIR") or (ROOT_DIR / "uploads"))
+
+
+def _local_file_path(path: str) -> Optional[Path]:
+    clean = (path or "").replace("\\", "/").lstrip("/")
+    if not clean or ".." in clean.split("/"):
+        return None
+    root = LOCAL_UPLOAD_DIR.resolve()
+    full = (root / clean).resolve()
+    try:
+        full.relative_to(root)
+    except ValueError:
+        return None
+    return full
+
+
+def put_local(path: str, data: bytes) -> dict:
+    full = _local_file_path(path)
+    if not full:
+        raise ValueError("invalid upload path")
+    full.parent.mkdir(parents=True, exist_ok=True)
+    full.write_bytes(data)
+    return {"path": path, "size": len(data)}
+
+
+def get_local(path: str):
+    full = _local_file_path(path)
+    if not full or not full.is_file():
+        return None
+    return full.read_bytes()
+
+
+def _mp4_video_size(data: bytes):
+    n = len(data)
+
+    def walk(start, end):
+        i = start
+        while i + 8 <= end:
+            size = int.from_bytes(data[i:i + 4], "big")
+            typ = data[i + 4:i + 8]
+            hdr = 8
+            if size == 1 and i + 16 <= end:
+                size = int.from_bytes(data[i + 8:i + 16], "big")
+                hdr = 16
+            if size < hdr:
+                break
+            box_end = min(end, i + size if size else end)
+            if typ in (b"moov", b"trak", b"mdia", b"minf"):
+                found = walk(i + hdr, box_end)
+                if found:
+                    return found
+            elif typ == b"tkhd":
+                ver = data[i + hdr] if i + hdr < box_end else 0
+                off = i + (84 if ver == 0 else 96)
+                if off + 8 <= box_end:
+                    w = int.from_bytes(data[off:off + 4], "big") / 65536.0
+                    h = int.from_bytes(data[off + 4:off + 8], "big") / 65536.0
+                    if w >= 16 and h >= 16:
+                        return int(w), int(h)
+            i = box_end
+        return None
+
+    found = walk(0, min(n, 2_000_000))
+    if found:
+        return found
+    if n > 2_000_000:
+        return walk(max(0, n - 2_000_000), n)
+    return None
 
 
 def init_storage(force: bool = False):
@@ -1056,13 +1315,21 @@ def scan_blocked(*texts) -> Optional[str]:
     return m.group(0) if m else None
 
 
+_DEFAULT_CAT_ICON = {"gear": "backpack", "vehicles": "car", "art": "brush"}
+
+
 async def seed_categories():
     for i, c in enumerate(ALLOWED_CATEGORIES):
         await db.categories.update_one({"slug": c["slug"]}, {"$setOnInsert": {
             "id": str(uuid.uuid4()), "name": c["name"], "slug": c["slug"],
             "is_restricted": False, "blocked_keywords": [], "active": True, "order": i,
+            "icon": _DEFAULT_CAT_ICON.get(c["slug"], "backpack"), "image": "",
             "created_at": now_iso(),
         }}, upsert=True)
+        await db.categories.update_one(
+            {"slug": c["slug"], "icon": {"$exists": False}},
+            {"$set": {"icon": _DEFAULT_CAT_ICON.get(c["slug"], "backpack"), "image": ""}},
+        )
     for c in RESTRICTED_CATEGORIES:
         await db.categories.update_one({"slug": c["slug"]}, {"$setOnInsert": {
             "id": str(uuid.uuid4()), "name": c["name"], "slug": c["slug"],
@@ -1089,6 +1356,10 @@ class ListingBody(BaseModel):
 
 class OfferBody(BaseModel):
     amount: float = Field(gt=0)
+
+
+class OfferActionBody(BaseModel):
+    amount: Optional[float] = None
 
 
 async def seller_public(seller_id: str) -> dict:
@@ -1138,12 +1409,94 @@ async def listing_public(listing: dict, with_seller: bool = True) -> dict:
 # ---------------------------------------------------------------------------
 # Categories
 # ---------------------------------------------------------------------------
+def _slugify(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")
+    return slug[:40] or "category"
+
+
+def _cat_public(c: dict) -> dict:
+    return {
+        "id": c.get("id"), "name": c.get("name") or "", "slug": c.get("slug") or "",
+        "icon": c.get("icon") or "backpack", "image": c.get("image") or "",
+        "active": bool(c.get("active", True)), "order": int(c.get("order") or 0),
+        "is_restricted": bool(c.get("is_restricted")),
+    }
+
+
+class CategoryBody(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    icon: str = "backpack"
+    image: str = ""
+    active: bool = True
+
+
 @api.get("/categories")
 async def list_categories(user: dict = Depends(require_verified)):
     cats = await db.categories.find(
         {"active": True, "is_restricted": False}, {"_id": 0}
     ).sort("order", 1).to_list(100)
-    return {"categories": cats}
+    return {"categories": [_cat_public(c) for c in cats]}
+
+
+@api.get("/admin/categories")
+async def admin_categories(admin: dict = Depends(require_admin)):
+    cats = await db.categories.find({"is_restricted": False}, {"_id": 0}).sort("order", 1).to_list(100)
+    return {"categories": [_cat_public(c) for c in cats]}
+
+
+@api.post("/admin/categories")
+async def admin_create_category(body: CategoryBody, admin: dict = Depends(require_admin)):
+    name = body.name.strip()
+    slug = _slugify(name)
+    if slug in {c["slug"] for c in RESTRICTED_CATEGORIES}:
+        raise HTTPException(status_code=400, detail="That category is restricted")
+    base = slug
+    n = 2
+    while await db.categories.find_one({"slug": slug}):
+        slug = f"{base}-{n}"
+        n += 1
+    last = await db.categories.find_one({"is_restricted": False}, sort=[("order", -1)])
+    doc = {
+        "id": str(uuid.uuid4()), "name": name, "slug": slug,
+        "icon": (body.icon or "backpack").strip() or "backpack",
+        "image": (body.image or "").strip(),
+        "is_restricted": False, "blocked_keywords": [],
+        "active": bool(body.active), "order": int((last or {}).get("order") or 0) + 1,
+        "created_at": now_iso(),
+    }
+    await db.categories.insert_one(doc)
+    await audit(admin, "category_create", "category", doc["id"], {"name": name})
+    return _cat_public(doc)
+
+
+@api.put("/admin/categories/{cat_id}")
+async def admin_update_category(cat_id: str, body: CategoryBody, admin: dict = Depends(require_admin)):
+    cat = await db.categories.find_one({"id": cat_id, "is_restricted": False}, {"_id": 0})
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+    updates = {
+        "name": body.name.strip(),
+        "icon": (body.icon or "backpack").strip() or "backpack",
+        "image": (body.image or "").strip(),
+        "active": bool(body.active),
+        "updated_at": now_iso(),
+    }
+    await db.categories.update_one({"id": cat_id}, {"$set": updates})
+    fresh = await db.categories.find_one({"id": cat_id}, {"_id": 0})
+    return _cat_public(fresh)
+
+
+@api.delete("/admin/categories/{cat_id}")
+async def admin_delete_category(cat_id: str, admin: dict = Depends(require_admin)):
+    cat = await db.categories.find_one({"id": cat_id, "is_restricted": False}, {"_id": 0})
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+    used = await db.listings.count_documents({"category": cat["slug"]})
+    if used:
+        raise HTTPException(status_code=400, detail=f"{used} listing(s) still use this category. Hide it instead of deleting it.")
+    await db.categories.delete_one({"id": cat_id})
+    await audit(admin, "category_delete", "category", cat_id, {"slug": cat["slug"]})
+    return {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------
@@ -1167,18 +1520,24 @@ async def upload_photo(file: UploadFile = File(...), user: dict = Depends(requir
     if len(data) > 8 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Image must be under 8MB")
     path = f"{APP_NAME}/uploads/{user['id']}/{uuid.uuid4()}.{ext}"
+    result = None
     try:
         result = await asyncio.to_thread(put_object, path, data, IMAGE_MIME[ext])
     except Exception as e:
-        logger.error(f"upload failed: {e}")
-        raise HTTPException(status_code=502, detail="Upload failed, please try again")
+        logger.error(f"object store upload failed, using disk: {e}")
+        try:
+            result = await asyncio.to_thread(put_local, path, data)
+        except Exception as e2:
+            logger.error(f"local upload failed: {e2}")
+            raise HTTPException(status_code=502, detail="Upload failed, please try again")
+    stored_path = (result or {}).get("path") or path
     await db.files.insert_one({
-        "id": str(uuid.uuid4()), "storage_path": result["path"],
+        "id": str(uuid.uuid4()), "storage_path": stored_path,
         "original_filename": file.filename, "content_type": IMAGE_MIME[ext],
-        "size": result.get("size"), "owner_id": user["id"], "is_deleted": False,
+        "size": (result or {}).get("size") or len(data), "owner_id": user["id"], "is_deleted": False,
         "created_at": now_iso(),
     })
-    return {"url": f"/api/files/{result['path']}", "path": result["path"]}
+    return {"url": f"/api/files/{stored_path}", "path": stored_path}
 
 
 @api.get("/files/{path:path}")
@@ -1186,11 +1545,15 @@ async def serve_file(path: str, request: Request, user: dict = Depends(require_v
     record = await db.files.find_one({"storage_path": path, "is_deleted": False})
     if not record:
         raise HTTPException(status_code=404, detail="File not found")
-    try:
-        data, ctype = await asyncio.to_thread(get_object, path)
-    except Exception as e:
-        logger.error(f"file fetch failed: {e}")
-        raise HTTPException(status_code=404, detail="File not found")
+    local = await asyncio.to_thread(get_local, path)
+    if local is not None:
+        data, ctype = local, record.get("content_type", "application/octet-stream")
+    else:
+        try:
+            data, ctype = await asyncio.to_thread(get_object, path)
+        except Exception as e:
+            logger.error(f"file fetch failed: {e}")
+            raise HTTPException(status_code=404, detail="File not found")
     media_type = record.get("content_type", ctype)
     total = len(data)
     range_header = request.headers.get("range")
@@ -1288,6 +1651,40 @@ async def update_listing(listing_id: str, body: ListingBody, user: dict = Depend
     result["flagged_reason"] = (f"Contains a prohibited term ('{flagged_term}'). "
                                 "Sent to Trust & Safety review.") if flagged_term else None
     return result
+
+
+class ListingStatusBody(BaseModel):
+    action: str
+
+
+@api.post("/listings/{listing_id}/status")
+async def set_listing_status(listing_id: str, body: ListingStatusBody, user: dict = Depends(require_verified)):
+    """Owner pause / reactivate / delete. Feed already shows only live listings."""
+    listing = await db.listings.find_one({"id": listing_id})
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    if listing["seller_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Not your listing")
+    status = listing.get("status")
+    action = body.action
+    if action == "pause":
+        if status != "live":
+            raise HTTPException(status_code=400, detail="Only a live listing can be paused")
+        new_status = "paused"
+    elif action == "reactivate":
+        if status != "paused":
+            raise HTTPException(status_code=400, detail="Only a paused listing can be reactivated")
+        new_status = "live"
+    elif action == "delete":
+        if status == "sold":
+            raise HTTPException(status_code=400, detail="Sold listings stay on record")
+        new_status = "removed"
+    else:
+        raise HTTPException(status_code=400, detail="Invalid action")
+    await db.listings.update_one({"id": listing_id}, {"$set": {"status": new_status, "updated_at": now_iso()}})
+    listing["status"] = new_status
+    await sync_story(listing)
+    return {"status": new_status}
 
 
 @api.get("/listings/mine")
@@ -1392,18 +1789,76 @@ async def listing_offers(listing_id: str, user: dict = Depends(require_verified)
     return {"offers": [await _offer_public(o) for o in offers], "is_owner": False}
 
 
+def _listing_glance(listing):
+    if not listing:
+        return None
+    photos = listing.get("photos") or []
+    return {
+        "id": listing.get("id"),
+        "title": listing.get("title"),
+        "price": listing.get("price"),
+        "photo": listing.get("photo") or (photos[0] if photos else None),
+        "photos": photos[:1],
+    }
+
+
+@api.get("/offers/mine")
+async def offers_mine(user: dict = Depends(require_verified)):
+    """Offers the member sent or received, for the dashboard glance."""
+    uid = user["id"]
+    mine = await db.listings.find(
+        {"seller_id": uid},
+        {"_id": 0, "id": 1, "title": 1, "price": 1, "photos": 1, "photo": 1, "seller_id": 1},
+    ).to_list(200)
+    mine_map = {l["id"]: l for l in mine}
+    rows = []
+    if mine_map:
+        raw = await db.offers.find({"listing_id": {"$in": list(mine_map)}}, {"_id": 0}).sort("created_at", -1).to_list(80)
+        for o in raw:
+            pub = await _offer_public(o, include_buyer=True)
+            pub["direction"] = "received"
+            pub["listing"] = _listing_glance(mine_map.get(o["listing_id"]))
+            rows.append(pub)
+    sent_raw = await db.offers.find({"buyer_id": uid}, {"_id": 0}).sort("created_at", -1).to_list(80)
+    for o in sent_raw:
+        listing = await db.listings.find_one(
+            {"id": o["listing_id"]},
+            {"_id": 0, "id": 1, "title": 1, "price": 1, "photos": 1, "photo": 1, "seller_id": 1},
+        )
+        pub = await _offer_public(o)
+        glance = _listing_glance(listing)
+        if glance and listing:
+            glance["seller"] = await seller_public(listing["seller_id"])
+        pub["listing"] = glance
+        pub["direction"] = "sent"
+        rows.append(pub)
+    rows.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+    return {"offers": rows}
+
+
 @api.post("/offers/{offer_id}/{action}")
-async def act_on_offer(offer_id: str, action: str, user: dict = Depends(require_verified)):
+async def act_on_offer(offer_id: str, action: str, user: dict = Depends(require_verified),
+                       body: OfferActionBody = OfferActionBody()):
     offer = await db.offers.find_one({"id": offer_id})
     if not offer:
         raise HTTPException(status_code=404, detail="Offer not found")
     listing = await db.listings.find_one({"id": offer["listing_id"]})
+    updates = {"updated_at": now_iso()}
     if action in ("accept", "decline"):
         if not listing or listing["seller_id"] != user["id"]:
             raise HTTPException(status_code=403, detail="Only the seller can do that")
         if offer["status"] != "pending":
             raise HTTPException(status_code=400, detail="Offer is no longer pending")
         new_status = "accepted" if action == "accept" else "declined"
+    elif action == "counter":
+        if not listing or listing["seller_id"] != user["id"]:
+            raise HTTPException(status_code=403, detail="Only the seller can do that")
+        if offer["status"] != "pending":
+            raise HTTPException(status_code=400, detail="Offer is no longer pending")
+        if body.amount is None or body.amount <= 0:
+            raise HTTPException(status_code=400, detail="Enter a counter amount")
+        new_status = "countered"
+        updates["amount"] = float(body.amount)
     elif action == "withdraw":
         if offer["buyer_id"] != user["id"]:
             raise HTTPException(status_code=403, detail="Only the buyer can withdraw")
@@ -1412,7 +1867,8 @@ async def act_on_offer(offer_id: str, action: str, user: dict = Depends(require_
         new_status = "withdrawn"
     else:
         raise HTTPException(status_code=400, detail="Invalid action")
-    await db.offers.update_one({"id": offer_id}, {"$set": {"status": new_status, "updated_at": now_iso()}})
+    updates["status"] = new_status
+    await db.offers.update_one({"id": offer_id}, {"$set": updates})
     tx_id = None
     if new_status == "accepted" and listing:
         tx = await create_transaction(listing, offer["buyer_id"], offer["amount"])
@@ -1613,27 +2069,518 @@ async def set_listing_fee(body: FeeConfigBody, admin: dict = Depends(require_adm
     return {"amount": float(body.amount), "active": bool(body.active)}
 
 
+class VendorBody(BaseModel):
+    name: str = Field(min_length=1)
+    contact: str = ""
+    fee_amount: float = 0
+    notes: str = ""
+    active: bool = True
+
+
+class AdBody(BaseModel):
+    model_config = {"extra": "ignore"}
+    advertiser: str = Field(min_length=1)
+    headline: str = Field(min_length=1)
+    ad_type: str = "product"
+    placement: str = "feed"
+    link_url: str = ""
+    listing_id: str = ""
+    seller_id: str = ""
+    price: str = ""
+    event_date: str = ""
+    location: str = ""
+    short_line: str = ""
+    category_slug: str = ""
+    keywords: str = ""
+    start_date: str = ""
+    expiry_date: str = ""
+    frequency: int = 4
+    image: str = ""
+    video: str = ""
+    days: int = 30
+    active: bool = True
+    show_cta: bool = False
+    approval: str = ""
+
+    @field_validator("price", "listing_id", "seller_id", "link_url", "image", "video", "keywords", "short_line", "location", mode="before")
+    @classmethod
+    def _stringify(cls, v):
+        if v is None:
+            return ""
+        return str(v)
+
+
+def _vendor_public(v: dict) -> dict:
+    return {
+        "id": v["id"], "name": v.get("name"), "contact": v.get("contact") or "",
+        "fee_amount": v.get("fee_amount", 0), "notes": v.get("notes") or "",
+        "active": v.get("active", True), "created_at": v.get("created_at"),
+    }
+
+
+AD_TYPES = ("product", "event", "service", "brand")
+AD_PLACES = ("feed", "story", "category", "search")
+AD_CTA = {"product": "Shop now", "event": "Get tickets", "service": "Learn more", "brand": "Visit site"}
+
+
+def _norm_placement(p: str) -> str:
+    p = (p or "feed").lower().strip()
+    if p in ("categories", "category"):
+        return "category"
+    if p in ("stories", "story"):
+        return "story"
+    if p in ("search", "search_results"):
+        return "search"
+    return "feed"
+
+
+def _ad_dates(a: dict):
+    start = (a.get("start_date") or "")[:10]
+    end = (a.get("expiry_date") or "")[:10]
+    if not start and a.get("created_at"):
+        start = str(a["created_at"])[:10]
+    if not end:
+        days = int(a.get("days") or 30)
+        try:
+            d0 = datetime.fromisoformat(start).date() if start else datetime.now(timezone.utc).date()
+            end = (d0 + timedelta(days=days)).isoformat()
+        except Exception:
+            end = ""
+    return start, end
+
+
+def _ad_status(a: dict) -> str:
+    approval = (a.get("approval") or "approved").lower()
+    if approval == "pending":
+        return "pending"
+    if approval == "rejected":
+        return "rejected"
+    if not a.get("active", True):
+        return "paused"
+    today = datetime.now(timezone.utc).date().isoformat()
+    start, end = _ad_dates(a)
+    if start and today < start:
+        return "scheduled"
+    if end and today > end:
+        return "expired"
+    return "live"
+
+
+def _ad_dest(a: dict) -> str:
+    lid = (a.get("listing_id") or "").strip()
+    sid = (a.get("seller_id") or "").strip()
+    if lid:
+        return f"/listing/{lid}"
+    if sid:
+        return f"/shop/{sid}"
+    return (a.get("link_url") or "").strip()
+
+
+def _ad_from_body(body: AdBody) -> dict:
+    ad_type = body.ad_type if body.ad_type in AD_TYPES else "product"
+    placement = _norm_placement(body.placement)
+    if placement not in AD_PLACES:
+        placement = "feed"
+    start = (body.start_date or "").strip()[:10]
+    expiry = (body.expiry_date or "").strip()[:10]
+    today = datetime.now(timezone.utc).date()
+    if not start:
+        start = today.isoformat()
+    days = int(body.days or 30)
+    if not expiry:
+        try:
+            expiry = (datetime.fromisoformat(start).date() + timedelta(days=days)).isoformat()
+        except Exception:
+            expiry = (today + timedelta(days=days)).isoformat()
+    try:
+        freq = int(body.frequency or 0)
+    except Exception:
+        freq = 0
+    if freq < 1:
+        freq = 3 if placement == "story" else 4
+    freq = max(1, min(8, freq))
+    out = {
+        "advertiser": body.advertiser.strip(),
+        "headline": body.headline.strip(),
+        "ad_type": ad_type,
+        "placement": placement,
+        "link_url": (body.link_url or "").strip(),
+        "listing_id": (body.listing_id or "").strip(),
+        "seller_id": (body.seller_id or "").strip(),
+        "price": str(body.price or "").strip(),
+        "event_date": (body.event_date or "").strip()[:10],
+        "location": (body.location or "").strip(),
+        "short_line": (body.short_line or "").strip(),
+        "category_slug": (body.category_slug or "").strip(),
+        "keywords": (body.keywords or "").strip(),
+        "start_date": start,
+        "expiry_date": expiry,
+        "frequency": freq,
+        "image": (body.image or "").strip(),
+        "video": (body.video or "").strip(),
+        "days": days,
+        "active": bool(body.active),
+        "show_cta": bool(body.show_cta),
+    }
+    approval = (body.approval or "").strip().lower()
+    if approval in ("pending", "approved", "rejected"):
+        out["approval"] = approval
+    return out
+
+
+def _ad_public(a: dict) -> dict:
+    views = int(a.get("views") or 0)
+    clicks = int(a.get("clicks") or 0)
+    start, end = _ad_dates(a)
+    ad_type = a.get("ad_type") if a.get("ad_type") in AD_TYPES else "product"
+    placement = _norm_placement(a.get("placement"))
+    return {
+        "id": a["id"],
+        "advertiser": a.get("advertiser") or "",
+        "headline": a.get("headline") or "",
+        "ad_type": ad_type,
+        "placement": placement,
+        "link_url": a.get("link_url") or "",
+        "listing_id": a.get("listing_id") or "",
+        "seller_id": a.get("seller_id") or "",
+        "price": a.get("price") or "",
+        "event_date": a.get("event_date") or "",
+        "location": a.get("location") or "",
+        "short_line": a.get("short_line") or "",
+        "category_slug": a.get("category_slug") or "",
+        "keywords": a.get("keywords") or "",
+        "start_date": start,
+        "expiry_date": end,
+        "frequency": int(a.get("frequency") or (3 if placement == "story" else 4)),
+        "image": a.get("image") or "",
+        "video": a.get("video") or "",
+        "days": int(a.get("days") or 30),
+        "active": bool(a.get("active", True)),
+        "show_cta": bool(a.get("show_cta", False)),
+        "approval": (a.get("approval") or "approved"),
+        "owner_id": a.get("owner_id") or "",
+        "views": views,
+        "clicks": clicks,
+        "ctr": round((clicks / views) * 100, 1) if views else 0.0,
+        "cta": AD_CTA.get(ad_type, "Shop now"),
+        "status": _ad_status(a),
+        "daily": a.get("daily") or {},
+        "created_at": a.get("created_at"),
+        "destination": _ad_dest(a),
+    }
+
+
+async def _ad_bump(ad_id: str, field: str):
+    today = datetime.now(timezone.utc).date().isoformat()
+    await db.ads.update_one({"id": ad_id}, {"$inc": {field: 1, f"daily.{today}.{field}": 1}})
+
+
+@api.get("/admin/vendors")
+async def admin_vendors(admin: dict = Depends(require_admin)):
+    docs = await db.vendors.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return {"vendors": [_vendor_public(v) for v in docs]}
+
+
+@api.post("/admin/vendors")
+async def admin_create_vendor(body: VendorBody, admin: dict = Depends(require_admin)):
+    doc = {
+        "id": str(uuid.uuid4()), "name": body.name.strip(), "contact": body.contact.strip(),
+        "fee_amount": float(body.fee_amount or 0), "notes": body.notes.strip(),
+        "active": bool(body.active), "created_at": now_iso(),
+    }
+    await db.vendors.insert_one(doc)
+    await audit(admin, "vendor_create", "vendor", doc["id"], {"name": doc["name"]})
+    return _vendor_public(doc)
+
+
+@api.put("/admin/vendors/{vendor_id}")
+async def admin_update_vendor(vendor_id: str, body: VendorBody, admin: dict = Depends(require_admin)):
+    updates = {
+        "name": body.name.strip(), "contact": body.contact.strip(),
+        "fee_amount": float(body.fee_amount or 0), "notes": body.notes.strip(),
+        "active": bool(body.active), "updated_at": now_iso(),
+    }
+    res = await db.vendors.update_one({"id": vendor_id}, {"$set": updates})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+    fresh = await db.vendors.find_one({"id": vendor_id}, {"_id": 0})
+    return _vendor_public(fresh)
+
+
+@api.delete("/admin/vendors/{vendor_id}")
+async def admin_delete_vendor(vendor_id: str, admin: dict = Depends(require_admin)):
+    await db.vendors.delete_one({"id": vendor_id})
+    await audit(admin, "vendor_delete", "vendor", vendor_id, {})
+    return {"status": "ok"}
+
+
+@api.get("/admin/ads")
+async def admin_ads(admin: dict = Depends(require_admin)):
+    docs = await db.ads.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    ads = [_ad_public(a) for a in docs]
+    live = [a for a in ads if a["status"] == "live"]
+    views = sum(a["views"] for a in ads)
+    clicks = sum(a["clicks"] for a in ads)
+    return {
+        "ads": ads,
+        "stats": {
+            "live": len(live),
+            "views": views,
+            "clicks": clicks,
+            "ctr": round((clicks / views) * 100, 1) if views else 0.0,
+        },
+    }
+
+
+@api.post("/admin/ads")
+async def admin_create_ad(body: AdBody, admin: dict = Depends(require_admin)):
+    fields = _ad_from_body(body)
+    fields.setdefault("approval", "approved")
+    doc = {
+        "id": str(uuid.uuid4()), **fields,
+        "views": 0, "clicks": 0, "daily": {},
+        "created_at": now_iso(),
+    }
+    await db.ads.insert_one(doc)
+    await audit(admin, "ad_create", "ad", doc["id"], {"advertiser": doc["advertiser"], "placement": doc["placement"]})
+    return _ad_public(doc)
+
+
+@api.put("/admin/ads/{ad_id}")
+async def admin_update_ad(ad_id: str, body: AdBody, admin: dict = Depends(require_admin)):
+    fields = _ad_from_body(body)
+    fields["updated_at"] = now_iso()
+    res = await db.ads.update_one({"id": ad_id}, {"$set": fields})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Ad not found")
+    fresh = await db.ads.find_one({"id": ad_id}, {"_id": 0})
+    return _ad_public(fresh)
+
+
+@api.delete("/admin/ads/{ad_id}")
+async def admin_delete_ad(ad_id: str, admin: dict = Depends(require_admin)):
+    await db.ads.delete_one({"id": ad_id})
+    await audit(admin, "ad_delete", "ad", ad_id, {})
+    return {"status": "ok"}
+
+
+def _ad_matches(a: dict, placement: Optional[str], category: Optional[str], q: Optional[str]) -> bool:
+    if _ad_status(a) != "live":
+        return False
+    p = _norm_placement(a.get("placement"))
+    if placement and p != _norm_placement(placement):
+        return False
+    if category and p == "category":
+        slug = (a.get("category_slug") or "").strip()
+        if slug and slug != category:
+            return False
+    if q is not None and p == "search":
+        if not q.strip():
+            return False
+        kws = [k.strip().lower() for k in (a.get("keywords") or "").split(",") if k.strip()]
+        needle = q.lower()
+        if kws and not any(k in needle or needle in k for k in kws):
+            return False
+    return True
+
+
+@api.get("/ads/mine")
+async def my_ads(user: dict = Depends(require_verified)):
+    docs = await db.ads.find({"owner_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return {"ads": [_ad_public(a) for a in docs]}
+
+
+@api.post("/ads")
+async def submit_ad(body: AdBody, user: dict = Depends(require_verified)):
+    fields = _ad_from_body(body)
+    if not fields.get("image"):
+        raise HTTPException(status_code=400, detail="Add an image before submitting")
+    if not fields.get("advertiser"):
+        fields["advertiser"] = (user.get("email") or "Member").split("@")[0]
+    fields["approval"] = "pending"
+    fields["active"] = False
+    fields["owner_id"] = user["id"]
+    doc = {
+        "id": str(uuid.uuid4()), **fields,
+        "views": 0, "clicks": 0, "daily": {},
+        "created_at": now_iso(),
+    }
+    await db.ads.insert_one(doc)
+    return _ad_public(doc)
+
+
+@api.get("/ads")
+async def public_ads(
+    user: dict = Depends(require_verified),
+    placement: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    q: Optional[str] = Query(None),
+):
+    docs = await db.ads.find({}, {"_id": 0}).to_list(200)
+    ads = [_ad_public(a) for a in docs if _ad_matches(a, placement, category, q)]
+    return {"ads": ads}
+
+
+@api.post("/ads/{ad_id}/view")
+async def ad_view(ad_id: str, user: dict = Depends(require_verified)):
+    a = await db.ads.find_one({"id": ad_id}, {"_id": 0, "id": 1})
+    if not a:
+        raise HTTPException(status_code=404, detail="Ad not found")
+    await _ad_bump(ad_id, "views")
+    return {"status": "ok"}
+
+
+@api.post("/ads/{ad_id}/click")
+async def ad_click(ad_id: str, user: dict = Depends(require_verified)):
+    a = await db.ads.find_one({"id": ad_id}, {"_id": 0})
+    if not a:
+        raise HTTPException(status_code=404, detail="Ad not found")
+    await _ad_bump(ad_id, "clicks")
+    return {"url": _ad_dest(a), "listing_id": a.get("listing_id") or "", "seller_id": a.get("seller_id") or ""}
+
+
+@api.get("/shop/{seller_id}")
+async def seller_shop(seller_id: str, user: dict = Depends(require_verified)):
+    seller = await seller_public(seller_id)
+    docs = await db.listings.find(
+        {"seller_id": seller_id, "status": "live"}, {"_id": 0}
+    ).sort("created_at", -1).to_list(200)
+    listings = []
+    for d in docs:
+        item = await listing_public(d, with_seller=False)
+        item["seller"] = seller
+        listings.append(item)
+    return {"seller": seller, "listings": listings}
+
+
+@api.get("/admin/activity")
+async def admin_activity(admin: dict = Depends(require_admin)):
+    """Recent offers and orders so the owner can see marketplace activity."""
+    offers = await db.offers.find({}, {"_id": 0}).sort("created_at", -1).to_list(12)
+    orders = await db.transactions.find({}, {"_id": 0}).sort("created_at", -1).to_list(12)
+    listing_ids = list({o.get("listing_id") for o in offers + orders if o.get("listing_id")})
+    listings = await db.listings.find(
+        {"id": {"$in": listing_ids}},
+        {"_id": 0, "id": 1, "title": 1, "price": 1, "photos": 1, "photo": 1, "video": 1},
+    ).to_list(80) if listing_ids else []
+    titles = {l["id"]: l for l in listings}
+
+    def _photo(listing):
+        photos = listing.get("photos") or []
+        return listing.get("photo") or (photos[0] if photos else None)
+
+    def offer_row(o):
+        listing = titles.get(o.get("listing_id")) or {}
+        return {
+            "id": o.get("id"), "listing_id": o.get("listing_id"),
+            "amount": o.get("amount"), "status": o.get("status"),
+            "created_at": o.get("created_at"), "title": listing.get("title") or "Listing",
+            "price": listing.get("price"), "photo": _photo(listing),
+            "has_video": bool(listing.get("video")),
+        }
+
+    def order_row(t):
+        listing = titles.get(t.get("listing_id")) or {}
+        return {
+            "id": t.get("id"), "listing_id": t.get("listing_id"),
+            "amount": t.get("agreed_amount"), "status": t.get("status"),
+            "created_at": t.get("created_at"), "title": listing.get("title") or "Listing",
+            "photo": _photo(listing), "has_video": bool(listing.get("video")),
+        }
+
+    actions = await db.admin_actions.find({}, {"_id": 0}).sort("timestamp", -1).to_list(8)
+    return {
+        "offers": [offer_row(o) for o in offers],
+        "orders": [order_row(t) for t in orders],
+        "offers_pending": await db.offers.count_documents({"status": "pending"}),
+        "orders_open": await db.transactions.count_documents({"status": "agreed"}),
+        "audit": actions,
+    }
+
+
+@api.get("/admin/money")
+async def admin_money(admin: dict = Depends(require_admin)):
+    """Owner view of PayPal connections, Stripe invoices, and fee switches. Charging itself is the next step."""
+    members = await db.users.find(
+        {"role": "member"},
+        {"_id": 0, "id": 1, "email": 1, "paypal_me": 1, "paypal_email": 1, "paypal_ref": 1, "venmo_handle": 1},
+    ).to_list(2000)
+    paypal_members = []
+    venmo = 0
+    for u in members:
+        if u.get("paypal_me") or u.get("paypal_email") or u.get("paypal_ref"):
+            paypal_members.append({
+                "id": u["id"], "email": u.get("email"),
+                "paypal_me": u.get("paypal_me"), "paypal_email": u.get("paypal_email"),
+            })
+        if u.get("venmo_handle"):
+            venmo += 1
+    invoices = await db.payment_transactions.find({}, {"_id": 0}).sort("created_at", -1).to_list(80)
+    boosts = await db.boost_purchases.find({}, {"_id": 0}).sort("created_at", -1).to_list(40)
+    listing_ids = list({b.get("listing_id") for b in boosts if b.get("listing_id")})
+    titles = {}
+    if listing_ids:
+        for l in await db.listings.find({"id": {"$in": listing_ids}}, {"_id": 0, "id": 1, "title": 1}).to_list(80):
+            titles[l["id"]] = l.get("title")
+    for b in boosts:
+        b["title"] = titles.get(b.get("listing_id")) or "Listing"
+    paid = [i for i in invoices if i.get("payment_status") == "paid"]
+    fee = await get_listing_fee_cfg()
+    return {
+        "paypal_connected": len(paypal_members),
+        "venmo_connected": venmo,
+        "members_total": len(members),
+        "paypal_members": paypal_members[:60],
+        "invoices": invoices,
+        "boosts": boosts,
+        "listing_fee": fee,
+        "stripe_paid": len(paid),
+        "stripe_pending": sum(1 for i in invoices if i.get("payment_status") == "pending"),
+        "stripe_volume": round(sum(float(i.get("amount") or 0) for i in paid), 2),
+    }
+
+
 @api.post("/upload/video")
-async def upload_video(file: UploadFile = File(...), user: dict = Depends(require_verified)):
+async def upload_video(
+    file: UploadFile = File(...),
+    user: dict = Depends(require_verified),
+    aspect: Optional[str] = Query(None),
+):
     ext = (file.filename.rsplit(".", 1)[-1] if "." in (file.filename or "") else "").lower()
     if ext not in VIDEO_MIME:
         raise HTTPException(status_code=400, detail="Only MP4, MOV, WEBM or M4V videos are allowed")
     data = await file.read()
     if len(data) > 120 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Video must be under 120MB")
+    want = (aspect or "").replace(":", "x").lower()
+    if want in ("9x16", "story") and ext in ("mp4", "m4v", "mov"):
+        dim = _mp4_video_size(data)
+        if dim:
+            w, h = dim
+            if abs((w / h) - (9 / 16)) / (9 / 16) > 0.08:
+                raise HTTPException(
+                    status_code=400,
+                    detail="This video is not 9:16 (1080 × 1920). Crop it in CapCut, Premiere or similar, then upload again.",
+                )
     path = f"{APP_NAME}/videos/{user['id']}/{uuid.uuid4()}.{ext}"
+    result = None
     try:
         result = await asyncio.to_thread(put_object, path, data, VIDEO_MIME[ext])
     except Exception as e:
-        logger.error(f"video upload failed: {e}")
-        raise HTTPException(status_code=502, detail="Video upload failed, please try again")
+        logger.error(f"object store video failed, using disk: {e}")
+        try:
+            result = await asyncio.to_thread(put_local, path, data)
+        except Exception as e2:
+            logger.error(f"local video upload failed: {e2}")
+            raise HTTPException(status_code=502, detail="Video upload failed, please try again")
+    stored_path = (result or {}).get("path") or path
     await db.files.insert_one({
-        "id": str(uuid.uuid4()), "storage_path": result["path"],
+        "id": str(uuid.uuid4()), "storage_path": stored_path,
         "original_filename": file.filename, "content_type": VIDEO_MIME[ext],
-        "size": result.get("size"), "owner_id": user["id"], "is_deleted": False,
+        "size": (result or {}).get("size") or len(data), "owner_id": user["id"], "is_deleted": False,
         "created_at": now_iso(),
     })
-    return {"url": f"/api/files/{result['path']}", "path": result["path"]}
+    return {"url": f"/api/files/{stored_path}", "path": stored_path}
 
 
 async def sync_story(listing: dict):
@@ -2320,11 +3267,21 @@ async def admin_list_listings(status: Optional[str] = Query(None), admin: dict =
     for d in docs:
         open_reports = await db.reports.count_documents(
             {"target_type": "listing", "target_id": d["id"], "status": {"$in": ["open", "reviewing"]}})
+        photos = [p for p in (d.get("photos") or []) if p]
+        p = await db.profiles.find_one({"user_id": d["seller_id"]}, {"_id": 0}) or {}
+        handle = p.get("display_handle") or "Member"
         out.append({
             "id": d["id"], "title": d["title"], "status": d.get("status"),
             "category": d.get("category"), "price": d.get("price"),
-            "photo": (d.get("photos") or [None])[0], "seller_id": d["seller_id"],
-            "seller": (await seller_public(d["seller_id"]))["display_handle"],
+            "photo": (photos[0] if photos else None) or d.get("photo"),
+            "photo_count": len(photos) or (1 if d.get("photo") else 0),
+            "has_video": bool(d.get("video")),
+            "featured": _featured_active(d),
+            "location": d.get("location"),
+            "seller_id": d["seller_id"],
+            "seller": handle,
+            "seller_avatar": p.get("avatar"),
+            "seller_initials": _initials(handle),
             "open_reports": open_reports, "created_at": d.get("created_at"),
         })
     return {"listings": out}
@@ -2452,6 +3409,18 @@ async def admin_health(admin: dict = Depends(require_admin)):
             "members_7d": await db.users.count_documents({"role": "member", "created_at": {"$gte": week_ago}}),
         },
         "messages": {"threads": await db.message_threads.count_documents({})},
+        "offers_pending": await db.offers.count_documents({"status": "pending"}),
+        "orders_open": await db.transactions.count_documents({"status": "agreed"}),
+        "vendors": await db.vendors.count_documents({}),
+        "ads_live": await db.ads.count_documents({"active": True}),
+        "paypal_connected": await db.users.count_documents({"role": "member", "$or": [
+            {"paypal_me": {"$nin": [None, ""]}},
+            {"paypal_email": {"$nin": [None, ""]}},
+            {"paypal_ref": {"$nin": [None, ""]}},
+        ]}),
+        "venmo_connected": await db.users.count_documents({"role": "member", "venmo_handle": {"$nin": [None, ""]}}),
+        "stripe_paid": await db.payment_transactions.count_documents({"payment_status": "paid"}),
+        "stripe_pending": await db.payment_transactions.count_documents({"payment_status": "pending"}),
     }
 
 
@@ -2525,6 +3494,26 @@ async def root():
     return {"service": "First Unit API", "status": "ok"}
 
 app.include_router(api)
+
+# Same-origin production hosting: serve the built React app and fall back to
+# index.html so client-side routes work. API routes stay on the router above.
+STATIC_DIR = os.environ.get("STATIC_DIR", "").strip()
+if STATIC_DIR:
+    from fastapi.responses import FileResponse
+
+    _static_root = Path(STATIC_DIR).resolve()
+
+    @app.get("/{full_path:path}")
+    async def spa(full_path: str):
+        if full_path == "api" or full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not found")
+        candidate = (_static_root / full_path).resolve()
+        if candidate.is_file() and (_static_root == candidate or _static_root in candidate.parents):
+            return FileResponse(candidate)
+        index = _static_root / "index.html"
+        if index.is_file():
+            return FileResponse(index)
+        raise HTTPException(status_code=404, detail="Frontend build not found")
 
 app.add_middleware(
     CORSMiddleware,
@@ -2606,6 +3595,107 @@ async def seed_jobs():
                 "id": str(uuid.uuid4()), "department": dept, "title": title, "location": loc,
                 "active": True, "posted_at": ts, "created_at": ts, "updated_at": ts,
             })
+
+
+async def seed_sample_ads():
+    """Keep branded demo ads in every placement. Safe to re-run. Does not bump DEMO_SEED_V."""
+    today = datetime.now(timezone.utc).date()
+    samples = [
+        {"seed_key": "otis-feed", "advertiser": "OTIS", "headline": "Smart Gun Care Kit", "ad_type": "product",
+         "placement": "feed", "frequency": 4, "price": "$59", "keywords": "", "category_slug": "",
+         "short_line": "Clean. Lubricate. Protect.", "link_url": "https://otistec.com",
+         "image": "https://images.pexels.com/photos/162553/keys-workshop-mechanic-tools-162553.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=1080&w=1080"},
+        {"seed_key": "nexbelt-feed", "advertiser": "Nexbelt", "headline": "Titan PreciseFit Duty Belt", "ad_type": "product",
+         "placement": "feed", "frequency": 3, "price": "$68", "keywords": "", "category_slug": "",
+         "short_line": "The belt with no holes.", "link_url": "https://nexbelt.com",
+         "image": "https://images.pexels.com/photos/7714764/pexels-photo-7714764.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=1080&w=1080"},
+        {"seed_key": "perfectfit-feed", "advertiser": "Perfect Fit", "headline": "Shield Wallet", "ad_type": "product",
+         "placement": "feed", "frequency": 5, "price": "$42", "keywords": "", "category_slug": "",
+         "short_line": "Badge, ID, and cards. One slim wallet.", "link_url": "https://perfectfit.com",
+         "image": "https://images.unsplash.com/photo-1627123424574-724758594e93?auto=format&fit=crop&w=1080&q=80"},
+        {"seed_key": "rit-feed", "advertiser": "RIT Safety Solutions", "headline": "Rapid Intervention Pack", "ad_type": "product",
+         "placement": "feed", "frequency": 4, "price": "$189", "keywords": "", "category_slug": "",
+         "short_line": "Grab-and-go kit for the mayday.", "link_url": "https://ritsafetysolutions.com",
+         "image": "https://images.pexels.com/photos/8942498/pexels-photo-8942498.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=1080&w=1080"},
+        {"seed_key": "propper-feed", "advertiser": "Propper", "headline": "TAC.U Combat Pant", "ad_type": "product",
+         "placement": "feed", "frequency": 6, "price": "$54", "keywords": "", "category_slug": "",
+         "short_line": "Uniform pants built for the shift.", "link_url": "https://www.propper.com",
+         "image": "https://images.unsplash.com/photo-1624378439575-d8705ad7ae80?auto=format&fit=crop&w=1080&q=80"},
+        {"seed_key": "majfire-story", "advertiser": "Majfire", "headline": "Composite Fire Helmet", "ad_type": "product",
+         "placement": "story", "frequency": 3, "price": "$310", "keywords": "", "category_slug": "",
+         "short_line": "Lightweight shell, full brim.", "link_url": "https://majfire.com",
+         "image": "https://images.pexels.com/photos/5965214/pexels-photo-5965214.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=1920&w=1080"},
+        {"seed_key": "lakeland-story", "advertiser": "Lakeland", "headline": "Protect Your People", "ad_type": "brand",
+         "placement": "story", "frequency": 3, "price": "", "keywords": "", "category_slug": "",
+         "short_line": "Turnout gear for the line.", "link_url": "https://www.lakeland.com",
+         "image": "https://images.pexels.com/photos/280076/pexels-photo-280076.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=1920&w=1080"},
+        {"seed_key": "propper-story", "advertiser": "Propper", "headline": "Duty Uniform Package", "ad_type": "product",
+         "placement": "story", "frequency": 4, "price": "$96", "keywords": "", "category_slug": "",
+         "short_line": "Shift-ready from the first call.", "link_url": "https://www.propper.com",
+         "image": "https://images.unsplash.com/photo-1637590110484-03778d227a0d?auto=format&fit=crop&w=1080&q=80"},
+        {"seed_key": "lakeland-cat", "advertiser": "Lakeland", "headline": "Lakeland Turnout", "ad_type": "brand",
+         "placement": "category", "frequency": 1, "price": "", "keywords": "", "category_slug": "gear",
+         "short_line": "Protect your people.", "link_url": "https://www.lakeland.com",
+         "image": "https://images.unsplash.com/photo-1637590110484-03778d227a0d?auto=format&fit=crop&w=1080&q=80"},
+        {"seed_key": "premier-cat", "advertiser": "Premier Emblem & Insignia", "headline": "Department Patch Set", "ad_type": "product",
+         "placement": "category", "frequency": 1, "price": "$28", "keywords": "", "category_slug": "art",
+         "short_line": "Custom emblems for the house.", "link_url": "https://premieremblem.com",
+         "image": "https://images.unsplash.com/photo-1611532736597-de2d4265fba3?auto=format&fit=crop&w=1080&q=80"},
+        {"seed_key": "otis-cat", "advertiser": "OTIS", "headline": "Ripcord Bore Cleaner", "ad_type": "product",
+         "placement": "category", "frequency": 1, "price": "$18", "keywords": "", "category_slug": "gear",
+         "short_line": "Pull-through clean after every range day.", "link_url": "https://otistec.com",
+         "image": "https://images.pexels.com/photos/162553/keys-workshop-mechanic-tools-162553.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=1080&w=1080"},
+        {"seed_key": "rocky-search", "advertiser": "Rocky", "headline": "S2V Tactical Boot", "ad_type": "product",
+         "placement": "search", "frequency": 1, "price": "$165", "keywords": "boots, footwear, shoes, rocky",
+         "category_slug": "", "short_line": "Side-zip boot for the street and the trail.",
+         "link_url": "https://www.rockyboots.com",
+         "image": "https://images.unsplash.com/photo-1608256246200-53e635b5b65f?auto=format&fit=crop&w=1080&q=80"},
+        {"seed_key": "reebok-search", "advertiser": "Reebok", "headline": "Nano X Training Shoe", "ad_type": "product",
+         "placement": "search", "frequency": 1, "price": "$130", "keywords": "boots, shoes, training, reebok",
+         "category_slug": "", "short_line": "Gym to roll-call. Built to train.",
+         "link_url": "https://www.reebok.com",
+         "image": "https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=1080&q=80"},
+    ]
+    await db.ads.delete_many({"sample": True, "seed_key": {"$exists": False}})
+    for s in samples:
+        daily = {}
+        views = 0
+        clicks = 0
+        for i in range(7):
+            day = (today - timedelta(days=6 - i)).isoformat()
+            v = 900 + secrets.randbelow(350)
+            c = 25 + secrets.randbelow(40)
+            daily[day] = {"views": v, "clicks": c}
+            views += v
+            clicks += c
+        fields = {
+            **s, "listing_id": "", "seller_id": "", "event_date": "", "location": "",
+            "start_date": (today - timedelta(days=6)).isoformat(),
+            "expiry_date": (today + timedelta(days=21)).isoformat(),
+            "days": 30, "active": True, "show_cta": False, "views": views, "clicks": clicks, "daily": daily,
+            "sample": True,
+        }
+        existed = await db.ads.find_one({"seed_key": s["seed_key"]})
+        if existed:
+            await db.ads.update_one({"seed_key": s["seed_key"]}, {"$set": {k: v for k, v in fields.items()}})
+        else:
+            await db.ads.insert_one({"id": str(uuid.uuid4()), "created_at": now_iso(), **fields})
+    pending_key = "vendor-pending-511"
+    if not await db.ads.find_one({"seed_key": pending_key}):
+        await db.ads.insert_one({
+            "id": str(uuid.uuid4()), "created_at": now_iso(), "seed_key": pending_key, "sample": True,
+            "advertiser": "5.11 Tactical", "headline": "Rush 24 Patrol Pack", "ad_type": "product",
+            "placement": "feed", "frequency": 4, "price": "$125", "keywords": "backpack, patrol",
+            "category_slug": "gear", "short_line": "Submitted by a vendor. Waiting on approval.",
+            "link_url": "https://www.511tactical.com", "listing_id": "", "seller_id": "",
+            "event_date": "", "location": "",
+            "image": "https://images.pexels.com/photos/8942498/pexels-photo-8942498.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=1080&w=1080",
+            "video": "", "start_date": today.isoformat(),
+            "expiry_date": (today + timedelta(days=21)).isoformat(),
+            "days": 30, "active": False, "show_cta": False, "approval": "pending",
+            "views": 0, "clicks": 0, "daily": {}, "owner_id": "",
+        })
+    logger.info("Branded sample ads seeded")
 
 
 DEMO_SEED_V = "2026-06-final-ui-4"
@@ -2784,7 +3874,7 @@ async def seed_demo():
         doc = {
             "id": lid, "seller_id": seller_ids[si], "title": title, "category": cat,
             "condition": cond, "location": loc, "description": desc, "price": float(price),
-            "photos": photos, "video": (demo_video_path if video else None),
+            "photos": photos, "video": (demo_video_path if video and demo_video_path else video),
             "meetup_note": "Meet at a staffed, station-adjacent public location for a safe exchange.",
             "status": "live", "featured": feat, "featured_until": far if feat else None,
             "created_at": ts, "updated_at": ts,
@@ -2812,6 +3902,7 @@ async def startup():
     await seed_boosts()
     await seed_jobs()
     await seed_demo()
+    await seed_sample_ads()
     try:
         await asyncio.to_thread(init_storage)
         logger.info("Object storage initialized")
